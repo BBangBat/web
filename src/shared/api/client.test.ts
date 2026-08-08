@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { apiRequest } from "@/shared/api/client";
+import { AUTH_SESSION_EXPIRED_EVENT } from "@/shared/lib/auth-events";
 
 describe("apiRequest", () => {
   afterEach(() => {
@@ -61,5 +62,76 @@ describe("apiRequest", () => {
 
     await expect(apiRequest<void>("/api/congestion", { method: "POST" }))
       .rejects.toMatchObject({ retryAfterSeconds: 90 });
+  });
+
+  it("인증 요청이 401이면 액세스 토큰을 한 번 갱신하고 원래 요청을 재시도한다", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accessToken: "new-access-token" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ favorite: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(apiRequest<{ favorite: boolean }>("/api/members/favorites/7", {
+      method: "POST",
+      accessToken: "expired-access-token",
+    })).resolves.toEqual({ favorite: true });
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "/api/members/favorites/7",
+      "/auth/token/refresh",
+      "/api/members/favorites/7",
+    ]);
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Authorization"))
+      .toBe("Bearer expired-access-token");
+    expect(new Headers(fetchMock.mock.calls[2]?.[1]?.headers).get("Authorization"))
+      .toBe("Bearer new-access-token");
+  });
+
+  it("리프레시 쿠키가 없어 토큰 갱신이 401이면 재로그인을 위해 세션 만료를 알린다", async () => {
+    const sessionExpired = vi.fn();
+    window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, sessionExpired);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        message: "로그인이 필요합니다.",
+      }), { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await expect(apiRequest<void>("/api/members/favorites/7", {
+        method: "POST",
+        accessToken: "expired-access-token",
+      })).rejects.toMatchObject({ status: 401 });
+      expect(sessionExpired).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+        "/api/members/favorites/7",
+        "/auth/token/refresh",
+      ]);
+    } finally {
+      window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, sessionExpired);
+    }
+  });
+
+  it("토큰 갱신 후 업무 권한 403이 발생해도 로그인 세션을 만료시키지 않는다", async () => {
+    const sessionExpired = vi.fn();
+    window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, sessionExpired);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ accessToken: "new-access-token" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: "CONGESTION_VOTE_TOO_FAR",
+        message: "가게 근처에서만 투표할 수 있습니다.",
+      }), { status: 403 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await expect(apiRequest<void>("/api/congestion", {
+        method: "POST",
+        accessToken: "expired-access-token",
+      })).rejects.toMatchObject({ status: 403, code: "CONGESTION_VOTE_TOO_FAR" });
+      expect(sessionExpired).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, sessionExpired);
+    }
   });
 });

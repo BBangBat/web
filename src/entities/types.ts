@@ -87,6 +87,12 @@ export type MemberStats = {
   talkCount: number;
 };
 
+export type SocialProvider = "NAVER" | "KAKAO";
+
+export type MemberSocial = {
+  provider: SocialProvider;
+};
+
 export type PresignedUpload = {
   presignedUrl: string;
   objectKey: string;
@@ -96,13 +102,14 @@ export type SignupPayload = {
   tempToken: string;
   nickname: string;
   profileImageKey?: string | null;
-  gender: Gender;
-  ageGroup: AgeGroup;
+  gender?: Gender;
+  ageGroup?: AgeGroup;
   termsAgreed: boolean;
   privacyAgreed: boolean;
 };
 
 export type UpdateProfilePayload = {
+  name?: string;
   nickname?: string;
   profileImageKey?: string;
 };

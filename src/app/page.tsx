@@ -9,6 +9,15 @@ export default async function HomePage(props: PageProps<"/">) {
   const initialStoreId = Number.isInteger(parsedStoreId) && parsedStoreId > 0
     ? parsedStoreId
     : null;
+  const rawDetailPlacement = Array.isArray(searchParams.detail)
+    ? searchParams.detail[0]
+    : searchParams.detail;
+  const initialDetailPlacement = rawDetailPlacement === "sidebar" ? "sidebar" : "floating";
 
-  return <HomeScreen initialStoreId={initialStoreId} />;
+  return (
+    <HomeScreen
+      initialStoreId={initialStoreId}
+      initialDetailPlacement={initialDetailPlacement}
+    />
+  );
 }

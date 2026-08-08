@@ -22,7 +22,7 @@ describe("favorite cache", () => {
 
     await optimisticallySetFavorite(queryClient, "1", store, true);
 
-    expect(queryClient.getQueryData(["favorites", "1"])).toEqual([1, 2]);
+    expect(queryClient.getQueryData(["favorites", "1"])).toEqual([2, 1]);
     expect(queryClient.getQueryData<Store[]>(["favorite-stores", "1"])).toEqual([store]);
   });
 
@@ -32,6 +32,9 @@ describe("favorite cache", () => {
     queryClient.setQueryData<Store[]>(["favorite-stores", "1"], [store]);
 
     const snapshot = await optimisticallySetFavorite(queryClient, "1", store, false);
+    expect(queryClient.getQueryData(["favorites", "1"])).toEqual([]);
+    expect(queryClient.getQueryData<Store[]>(["favorite-stores", "1"])).toEqual([]);
+
     rollbackFavoriteCache(queryClient, "1", snapshot);
 
     expect(queryClient.getQueryData(["favorites", "1"])).toEqual([2]);

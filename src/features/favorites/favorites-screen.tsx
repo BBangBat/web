@@ -13,7 +13,7 @@ export function FavoritesScreen() {
   const { openLogin } = useLoginModal();
   const favoriteIdsQuery = useQuery({
     queryKey: ["favorites", memberId],
-    queryFn: () => bbangbatApi.getFavorites(memberId!, accessToken!),
+    queryFn: () => bbangbatApi.getFavorites(accessToken!),
     enabled: Boolean(accessToken && memberId),
   });
   const favoriteStoresQuery = useQuery({

@@ -2,6 +2,7 @@
 
 import {
   useDeferredValue,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -13,6 +14,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Heart, MapPin, Search, X } from "lucide-react";
 import type { Store, StoreBounds } from "@/entities/types";
 import { useAuth } from "@/features/auth/auth-context";
+import { consumeMapLoginModalRequest } from "@/features/auth/login-handoff";
 import { useLoginModal } from "@/features/auth/login-modal";
 import {
   optimisticallySetFavorite,
@@ -28,13 +30,19 @@ import { limitTextInput } from "@/shared/lib/text-input";
 import { useFeedback } from "@/shared/ui/feedback-provider";
 import { EmptyState, ErrorState, LoadingState } from "@/shared/ui/states";
 
-type SheetSnap = "collapsed" | "half" | "expanded";
+type SheetSnap = "collapsed" | "expanded";
 type SidebarTab = "nearby" | "favorites";
+type DetailPlacement = "floating" | "sidebar";
 
-const sheetSnaps: SheetSnap[] = ["expanded", "half", "collapsed"];
 const COLLAPSED_SHEET_HEIGHT = 270;
 
-export function HomeScreen({ initialStoreId = null }: { initialStoreId?: number | null }) {
+export function HomeScreen({
+  initialStoreId = null,
+  initialDetailPlacement = "floating",
+}: {
+  initialStoreId?: number | null;
+  initialDetailPlacement?: DetailPlacement;
+}) {
   const queryClient = useQueryClient();
   const { accessToken, memberId, status: authStatus } = useAuth();
   const { openLogin } = useLoginModal();
@@ -42,7 +50,6 @@ export function HomeScreen({ initialStoreId = null }: { initialStoreId?: number 
   const { notify } = useFeedback();
   const [activeTab, setActiveTab] = useState<SidebarTab>("nearby");
   const [query, setQuery] = useState("");
-  const [mapCenter, setMapCenter] = useState(DEFAULT_LOCATION);
   const [viewportCenter, setViewportCenter] = useState(DEFAULT_LOCATION);
   const [viewportBounds, setViewportBounds] = useState<StoreBounds | null>(null);
   const [areaSearchLocation, setAreaSearchLocation] = useState(DEFAULT_LOCATION);
@@ -57,9 +64,14 @@ export function HomeScreen({ initialStoreId = null }: { initialStoreId?: number 
   const [sheetSnap, setSheetSnap] = useState<SheetSnap>("collapsed");
   const [dragPosition, setDragPosition] = useState<number | null>(null);
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(initialStoreId);
-  const [detailPlacement, setDetailPlacement] = useState<"floating" | "sidebar">("floating");
+  const [searchedStore, setSearchedStore] = useState<Store | null>(null);
+  const [detailOpen, setDetailOpen] = useState(Boolean(initialStoreId));
+  const [detailPlacement, setDetailPlacement] = useState<DetailPlacement>(initialDetailPlacement);
   const sheetRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ startY: number; baseY: number } | null>(null);
+  const initialStoreFocusRef = useRef(false);
+  const initialAreaViewportRef = useRef<MapViewport | null>(null);
+  const mobileSearchSelectionRef = useRef(false);
   const deferredQuery = useDeferredValue(query.trim());
 
   const storesQuery = useQuery({
@@ -72,35 +84,14 @@ export function HomeScreen({ initialStoreId = null }: { initialStoreId?: number 
           areaSearchBounds.west.toFixed(5),
           areaSearchBounds.east.toFixed(5),
         ]
-      : [
-          "stores",
-          "nearby",
-          areaSearchLocation.latitude.toFixed(4),
-          areaSearchLocation.longitude.toFixed(4),
-        ],
-    queryFn: () => areaSearchBounds
-      ? bbangbatApi.getStoresByBounds(areaSearchBounds, areaSearchLocation)
-      : bbangbatApi.getStores(areaSearchLocation),
+      : ["stores", "bounds", "pending"],
+    queryFn: () => bbangbatApi.getStoresByBounds(areaSearchBounds!, areaSearchLocation),
+    enabled: areaSearchBounds !== null,
     placeholderData: (previousData) => previousData,
-  });
-  const mapBoundsStoresQuery = useQuery({
-    queryKey: viewportBounds
-      ? [
-          "map-stores",
-          viewportBounds.south.toFixed(5),
-          viewportBounds.north.toFixed(5),
-          viewportBounds.west.toFixed(5),
-          viewportBounds.east.toFixed(5),
-        ]
-      : ["map-stores", "initial"],
-    queryFn: () => bbangbatApi.getStoresByBounds(viewportBounds!, viewportCenter),
-    enabled: Boolean(viewportBounds),
-    placeholderData: (previousData) => previousData,
-    staleTime: 30_000,
   });
   const favoriteIdsQuery = useQuery({
     queryKey: ["favorites", memberId],
-    queryFn: () => bbangbatApi.getFavorites(memberId!, accessToken!),
+    queryFn: () => bbangbatApi.getFavorites(accessToken!),
     enabled: Boolean(accessToken && memberId),
   });
   const favoriteStoresQuery = useQuery({
@@ -124,11 +115,10 @@ export function HomeScreen({ initialStoreId = null }: { initialStoreId?: number 
     () => new Set(favoriteIdsQuery.data ?? []),
     [favoriteIdsQuery.data],
   );
-  const mapViewportStores = mapBoundsStoresQuery.data ?? nearbyStores;
   const activeStores = activeTab === "nearby" ? nearbyStores : favoriteStores;
   const allKnownStores = useMemo(
-    () => [...nearbyStores, ...favoriteStores, ...mapViewportStores],
-    [favoriteStores, mapViewportStores, nearbyStores],
+    () => [...nearbyStores, ...favoriteStores],
+    [favoriteStores, nearbyStores],
   );
   const activeStoreIds = useMemo(() => activeStores.map((store) => store.id), [activeStores]);
   const congestionStoreIds = useMemo(() => {
@@ -157,13 +147,38 @@ export function HomeScreen({ initialStoreId = null }: { initialStoreId?: number 
   });
 
   const knownSelectedStore =
-    allKnownStores.find((store) => store.id === selectedStoreId) ?? null;
+    allKnownStores.find((store) => store.id === selectedStoreId)
+    ?? (searchedStore?.id === selectedStoreId ? searchedStore : null);
   const selectedStoreQuery = useQuery({
     queryKey: ["store", selectedStoreId],
     queryFn: () => bbangbatApi.getStore(selectedStoreId!),
     enabled: Boolean(selectedStoreId) && !knownSelectedStore,
   });
   const selectedStore = knownSelectedStore ?? selectedStoreQuery.data ?? null;
+
+  useEffect(() => {
+    const returnTo = consumeMapLoginModalRequest();
+    if (!returnTo) return;
+    queueMicrotask(() => openLogin(returnTo));
+  }, [openLogin]);
+
+  useEffect(() => {
+    if (
+      initialStoreFocusRef.current
+      || !initialStoreId
+      || selectedStore?.id !== initialStoreId
+    ) return;
+
+    initialStoreFocusRef.current = true;
+    setViewportCenter(selectedStore);
+    setMapFocus((current) => ({
+      id: current.id + 1,
+      center: selectedStore,
+      level: 3,
+      offsetForPanel: initialDetailPlacement === "floating",
+      preserveLevel: false,
+    }));
+  }, [initialDetailPlacement, initialStoreId, selectedStore]);
 
   const congestionByStore = useMemo(
     () => new Map((congestionsQuery.data ?? []).map((item) => [item.storeId, item])),
@@ -177,16 +192,17 @@ export function HomeScreen({ initialStoreId = null }: { initialStoreId?: number 
   const visibleStores = activeStores;
   const mapStores = useMemo(() => {
     const stores = new Map<number, (typeof nearbyStores)[number]>();
-    for (const store of mapViewportStores) stores.set(store.id, store);
+    for (const store of nearbyStores) stores.set(store.id, store);
+    if (searchedStore) stores.set(searchedStore.id, searchedStore);
     if (selectedStore) stores.set(selectedStore.id, selectedStore);
     return [...stores.values()];
-  }, [mapViewportStores, selectedStore]);
+  }, [nearbyStores, searchedStore, selectedStore]);
 
   const favoriteMutation = useMutation({
     mutationFn: ({ store, nextFavorite }: { store: Store; nextFavorite: boolean }) =>
       nextFavorite
-        ? bbangbatApi.addFavorite(store.id, memberId!, accessToken!)
-        : bbangbatApi.removeFavorite(store.id, memberId!, accessToken!),
+        ? bbangbatApi.addFavorite(store.id, accessToken!)
+        : bbangbatApi.removeFavorite(store.id, accessToken!),
     onMutate: ({ store, nextFavorite }) =>
       optimisticallySetFavorite(
         queryClient,
@@ -210,17 +226,24 @@ export function HomeScreen({ initialStoreId = null }: { initialStoreId?: number 
     },
   });
 
-  function updateSelectedStoreId(storeId: number | null) {
+  function updateSelectedStoreId(storeId: number | null, placement?: DetailPlacement) {
     setSelectedStoreId(storeId);
+    setDetailOpen(Boolean(storeId));
+    if (placement) setDetailPlacement(placement);
     const url = new URL(window.location.href);
-    if (storeId) url.searchParams.set("storeId", String(storeId));
-    else url.searchParams.delete("storeId");
+    if (storeId) {
+      url.searchParams.set("storeId", String(storeId));
+      if (placement === "sidebar") url.searchParams.set("detail", "sidebar");
+      else url.searchParams.delete("detail");
+    } else {
+      url.searchParams.delete("storeId");
+      url.searchParams.delete("detail");
+    }
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }
 
   function sheetBasePosition(snap: SheetSnap, height: number): number {
     if (snap === "expanded") return 0;
-    if (snap === "half") return height * 0.4;
     return Math.max(0, height - COLLAPSED_SHEET_HEIGHT);
   }
 
@@ -249,14 +272,13 @@ export function HomeScreen({ initialStoreId = null }: { initialStoreId?: number 
     const drag = dragRef.current;
     if (!drag) return;
     const delta = event.clientY - drag.startY;
-    const currentIndex = sheetSnaps.indexOf(sheetSnap);
 
     if (delta > 55) {
-      setSheetSnap(sheetSnaps[Math.min(sheetSnaps.length - 1, currentIndex + 1)] ?? "collapsed");
+      setSheetSnap("collapsed");
     } else if (delta < -55) {
-      setSheetSnap(sheetSnaps[Math.max(0, currentIndex - 1)] ?? "expanded");
+      setSheetSnap("expanded");
     } else if (Math.abs(delta) < 8) {
-      setSheetSnap(sheetSnap === "collapsed" ? "half" : sheetSnap === "half" ? "expanded" : "collapsed");
+      setSheetSnap(sheetSnap === "collapsed" ? "expanded" : "collapsed");
     }
 
     dragRef.current = null;
@@ -265,18 +287,16 @@ export function HomeScreen({ initialStoreId = null }: { initialStoreId?: number 
 
   async function locateUser() {
     updateSelectedStoreId(null);
+    setSearchedStore(null);
+    mobileSearchSelectionRef.current = false;
     setSheetSnap("collapsed");
     try {
       const coordinates = await requestLocation();
       if (isWithinDaejeon(coordinates)) {
         focusMap(coordinates, 4);
-        setAreaSearchLocation(coordinates);
-        setAreaSearchBounds(null);
         notify("현재 위치로 이동했어요.", "success");
       } else {
         focusMap(DEFAULT_LOCATION, 4);
-        setAreaSearchLocation(DEFAULT_LOCATION);
-        setAreaSearchBounds(null);
         notify("현재 위치가 대전 밖이라 대전 기본 위치로 이동했어요.", "info");
       }
     } catch (error) {
@@ -290,7 +310,6 @@ export function HomeScreen({ initialStoreId = null }: { initialStoreId?: number 
     offsetForPanel = false,
     preserveLevel = false,
   ) {
-    setMapCenter(center);
     setViewportCenter(center);
     setMapFocus((current) => ({
       id: current.id + 1,
@@ -302,19 +321,32 @@ export function HomeScreen({ initialStoreId = null }: { initialStoreId?: number 
   }
 
   function selectStore(storeId: number) {
-    setDetailPlacement("floating");
-    updateSelectedStoreId(storeId);
+    setSearchedStore(null);
+    mobileSearchSelectionRef.current = false;
+    updateSelectedStoreId(storeId, "floating");
     setSheetSnap("collapsed");
     const store = allKnownStores.find((item) => item.id === storeId);
     if (store) focusMap(store, 3, true);
   }
 
   function selectMapStore(storeId: number) {
-    setDetailPlacement("floating");
-    updateSelectedStoreId(storeId);
+    const isMobile = window.matchMedia("(max-width: 900px)").matches;
+    if (isMobile) {
+      setSelectedStoreId(storeId);
+      setDetailOpen(false);
+      setDetailPlacement("floating");
+      const url = new URL(window.location.href);
+      url.searchParams.delete("storeId");
+      url.searchParams.delete("detail");
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    } else {
+      updateSelectedStoreId(storeId, "floating");
+    }
     setSheetSnap("collapsed");
-    const store = allKnownStores.find((item) => item.id === storeId);
-    if (store) focusMap(store, 3, true, true);
+    const store = mapStores.find((item) => item.id === storeId);
+    if (store) {
+      focusMap(store, 3, true, true);
+    }
   }
 
   async function selectSearchResult(storeId: number) {
@@ -323,37 +355,80 @@ export function HomeScreen({ initialStoreId = null }: { initialStoreId?: number 
         queryKey: ["store", storeId],
         queryFn: () => bbangbatApi.getStore(storeId),
       });
-      setDetailPlacement("sidebar");
-      updateSelectedStoreId(storeId);
+      const isMobile = window.matchMedia("(max-width: 900px)").matches;
+      if (isMobile) {
+        setActiveTab("nearby");
+        setSearchedStore(store);
+        mobileSearchSelectionRef.current = true;
+        setSelectedStoreId(storeId);
+        setDetailOpen(false);
+        setDetailPlacement("floating");
+        const url = new URL(window.location.href);
+        url.searchParams.delete("storeId");
+        url.searchParams.delete("detail");
+        window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      } else {
+        updateSelectedStoreId(storeId, "sidebar");
+      }
       setSheetSnap("collapsed");
       setQuery("");
-      focusMap(store, 3);
+      focusMap(store, 3, isMobile);
     } catch (error) {
       notify(error instanceof Error ? error.message : "빵집 정보를 불러오지 못했어요.", "error");
     }
   }
 
-  function searchCurrentArea() {
+  function openSelectedStoreDetail(storeId: number) {
+    updateSelectedStoreId(storeId, "floating");
+    setSheetSnap("expanded");
+  }
+
+  function closeSelectedStoreDetail() {
+    updateSelectedStoreId(null);
+    setSheetSnap("collapsed");
+    if (!mobileSearchSelectionRef.current) return;
+
+    mobileSearchSelectionRef.current = false;
     setActiveTab("nearby");
+    setQuery("");
+    const initialArea = initialAreaViewportRef.current;
+    if (initialArea) {
+      setAreaSearchLocation(initialArea.center);
+      setAreaSearchBounds(initialArea.bounds);
+    }
+  }
+
+  function searchCurrentArea(searchViewport?: MapViewport) {
+    setActiveTab("nearby");
+    setSearchedStore(null);
+    mobileSearchSelectionRef.current = false;
     updateSelectedStoreId(null);
     setQuery("");
-    const nextBoundsKey = viewportBounds ? JSON.stringify(viewportBounds) : "";
+    const nextSearchCenter = searchViewport?.center ?? viewportCenter;
+    const nextSearchBounds = searchViewport?.bounds ?? viewportBounds;
+    const nextBoundsKey = nextSearchBounds ? JSON.stringify(nextSearchBounds) : "";
     const currentBoundsKey = areaSearchBounds ? JSON.stringify(areaSearchBounds) : "";
-    const areaChanged = distanceInKm(areaSearchLocation, viewportCenter) >= 0.01
+    const areaChanged = distanceInKm(areaSearchLocation, nextSearchCenter) >= 0.01
       || nextBoundsKey !== currentBoundsKey;
-    setAreaSearchLocation(viewportCenter);
-    setAreaSearchBounds(viewportBounds);
-    setMapCenter(viewportCenter);
+    setAreaSearchLocation(nextSearchCenter);
+    setAreaSearchBounds(nextSearchBounds);
     if (!areaChanged) void storesQuery.refetch();
   }
 
   function updateViewport(nextViewport: MapViewport) {
     setViewportCenter(nextViewport.center);
     setViewportBounds(nextViewport.bounds);
+    if (initialAreaViewportRef.current) return;
+
+    initialAreaViewportRef.current = nextViewport;
+    setAreaSearchLocation(nextViewport.center);
+    setAreaSearchBounds(nextViewport.bounds);
   }
 
   function changeTab(tab: SidebarTab) {
     setActiveTab(tab);
+    setSearchedStore(null);
+    mobileSearchSelectionRef.current = false;
     setQuery("");
     updateSelectedStoreId(null);
     setSheetSnap("collapsed");
@@ -372,12 +447,17 @@ export function HomeScreen({ initialStoreId = null }: { initialStoreId?: number 
 
   const listLoading =
     activeTab === "nearby"
-      ? storesQuery.isLoading
+      ? areaSearchBounds === null || storesQuery.isLoading
       : authStatus === "initializing" || favoriteIdsQuery.isLoading || favoriteStoresQuery.isLoading;
   const listError = activeTab === "nearby" ? storesQuery.isError : favoriteStoresQuery.isError;
 
   return (
-    <main className="home-shell" data-detail-open={Boolean(selectedStore)} data-detail-placement={detailPlacement}>
+    <main
+      className="home-shell"
+      data-detail-open={Boolean(selectedStore) && detailOpen}
+      data-detail-placement={detailPlacement}
+      data-searching={query.trim().length > 0}
+    >
       <section className="explore-panel" data-searching={query.trim().length > 0} aria-label="빵집 탐색">
         <div className="search-box">
           <Search aria-hidden="true" size={19} />
@@ -417,7 +497,7 @@ export function HomeScreen({ initialStoreId = null }: { initialStoreId?: number 
         <div
           ref={sheetRef}
           className={`mobile-bottom-sheet sheet-${sheetSnap}`}
-          data-selected={Boolean(selectedStore)}
+          data-selected={Boolean(selectedStore) && !detailOpen}
           style={dragPosition === null ? undefined : ({
             transform: `translateY(${dragPosition}px)`,
             transition: "none",
@@ -455,11 +535,12 @@ export function HomeScreen({ initialStoreId = null }: { initialStoreId?: number 
             </button>
           </div>
 
-          {selectedStore ? (
+          {selectedStore && !detailOpen ? (
             <div className="mobile-selected-store">
               <StoreCard
                 dense
                 store={selectedStore}
+                onSelect={openSelectedStoreDetail}
                 isFavorite={favoriteIds.has(selectedStore.id)}
                 favoritePending={favoriteMutation.isPending && favoriteMutation.variables?.store.id === selectedStore.id}
                 onToggleFavorite={toggleFavorite}
@@ -478,7 +559,9 @@ export function HomeScreen({ initialStoreId = null }: { initialStoreId?: number 
             {listError ? (
               <ErrorState
                 onRetry={() => void (
-                  activeTab === "nearby" ? storesQuery.refetch() : favoriteStoresQuery.refetch()
+                  activeTab === "nearby"
+                    ? storesQuery.refetch()
+                    : favoriteStoresQuery.refetch()
                 )}
               />
             ) : null}
@@ -516,20 +599,20 @@ export function HomeScreen({ initialStoreId = null }: { initialStoreId?: number 
         </div>
       </section>
 
-      {selectedStore ? (
+      {selectedStore && detailOpen ? (
         <StoreMapPanel
           key={selectedStore.id}
           placement={detailPlacement}
           store={selectedStore}
           congestion={congestionByStore.get(selectedStore.id)}
           summary={summaryByStore.get(selectedStore.id)}
-          onClose={() => updateSelectedStoreId(null)}
+          onClose={closeSelectedStoreDetail}
         />
       ) : null}
 
       <section className="map-panel" aria-label="빵집 지도">
         <BakeryMap
-          center={selectedStore ?? mapCenter}
+          center={DEFAULT_LOCATION}
           focusRequest={mapFocus}
           userLocation={locationStatus === "precise" ? location : null}
           locationStatus={locationStatus}
@@ -539,6 +622,7 @@ export function HomeScreen({ initialStoreId = null }: { initialStoreId?: number 
           onSelect={selectMapStore}
           onLocate={() => void locateUser()}
           onSearchHere={searchCurrentArea}
+          mobileSearchBottomInset={COLLAPSED_SHEET_HEIGHT}
           onViewportChange={updateViewport}
           onMapClick={() => updateSelectedStoreId(null)}
         />

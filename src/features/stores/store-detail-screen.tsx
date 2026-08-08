@@ -71,7 +71,7 @@ export function StoreDetailScreen({ storeId }: { storeId: number }) {
   });
   const favoritesQuery = useQuery({
     queryKey: ["favorites", memberId],
-    queryFn: () => bbangbatApi.getFavorites(memberId!, accessToken!),
+    queryFn: () => bbangbatApi.getFavorites(accessToken!),
     enabled: Boolean(accessToken && memberId),
   });
 
@@ -82,8 +82,8 @@ export function StoreDetailScreen({ storeId }: { storeId: number }) {
     mutationFn: async (nextFavorite: boolean) => {
       if (!accessToken || !memberId) throw new ApiError(401, { message: "로그인이 필요해요." });
       return nextFavorite
-        ? bbangbatApi.addFavorite(storeId, memberId, accessToken)
-        : bbangbatApi.removeFavorite(storeId, memberId, accessToken);
+        ? bbangbatApi.addFavorite(storeId, accessToken)
+        : bbangbatApi.removeFavorite(storeId, accessToken);
     },
     onMutate: (nextFavorite) =>
       storeQuery.data && memberId
@@ -152,7 +152,7 @@ export function StoreDetailScreen({ storeId }: { storeId: number }) {
   const talkMutation = useMutation({
     mutationFn: (content: string) => {
       if (!accessToken || !memberId) throw new ApiError(401, { message: "톡 작성은 로그인이 필요해요." });
-      return bbangbatApi.sendTalk(storeId, content, memberId, accessToken);
+      return bbangbatApi.sendTalk(storeId, content, accessToken);
     },
     onSuccess: async () => {
       setTalkContent("");
@@ -283,7 +283,7 @@ export function StoreDetailScreen({ storeId }: { storeId: number }) {
                   );
                 })}
               </div>
-              <p className="location-note">가게 반경 200m 안에서 참여할 수 있어요. 제보는 60분 후 사라져요.</p>
+              <p className="location-note">가게에서 300m 이내일 때 참여할 수 있으며, 투표 후 15분 뒤 재투표할 수 있어요.</p>
             </section>
 
             <section className="detail-section talk-section">

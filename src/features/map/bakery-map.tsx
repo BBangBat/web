@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { CustomOverlayMap, Map, useKakaoLoader } from "react-kakao-maps-sdk";
 import { Crosshair, Minus, Plus, Search, Wheat } from "lucide-react";
 import type { Congestion, Coordinates, Store } from "@/entities/types";
@@ -37,7 +37,8 @@ type BakeryMapProps = {
   selectedStoreId: number | null;
   onSelect: (storeId: number) => void;
   onLocate: () => void;
-  onSearchHere: () => void;
+  onSearchHere: (viewport: MapViewport) => void;
+  mobileSearchBottomInset: number;
   onMapClick: () => void;
   onViewportChange: (viewport: MapViewport) => void;
 };
@@ -63,8 +64,120 @@ function KakaoMapCanvas(props: BakeryMapProps) {
     libraries: ["services"],
   });
   const mapRef = useRef<kakao.maps.Map | null>(null);
+  const mapWrapRef = useRef<HTMLDivElement>(null);
+  const initialViewportFrameRef = useRef<number | null>(null);
+  const mapMovementFrameRef = useRef<number | null>(null);
+  const mapMovementActiveRef = useRef(false);
+  const mapDragRef = useRef(false);
+  const markerPointerRef = useRef<{
+    pointerId: number;
+    storeId: number;
+    startX: number;
+    startY: number;
+    moved: boolean;
+  } | null>(null);
   const [mapLevel, setMapLevel] = useState(5);
   const [maximumLevel, setMaximumLevel] = useState(7);
+  const showStoreNames = mapLevel <= 5;
+  const markerOffsetByStore = useMemo(() => {
+    const groups = new globalThis.Map<string, Store[]>();
+    const offsets = new globalThis.Map<number, { x: number; y: number }>();
+
+    for (const store of props.stores) {
+      const key = `${store.latitude.toFixed(6)}:${store.longitude.toFixed(6)}`;
+      const group = groups.get(key) ?? [];
+      group.push(store);
+      groups.set(key, group);
+    }
+
+    for (const group of groups.values()) {
+      if (group.length === 1) {
+        offsets.set(group[0]!.id, { x: 0, y: 0 });
+        continue;
+      }
+      const radius = showStoreNames ? 66 : 20;
+      group.forEach((store, index) => {
+        const angle = group.length === 2
+          ? index * Math.PI
+          : -Math.PI / 2 + (index * Math.PI * 2) / group.length;
+        offsets.set(store.id, {
+          x: Math.round(Math.cos(angle) * radius),
+          y: Math.round(Math.sin(angle) * radius),
+        });
+      });
+    }
+
+    return offsets;
+  }, [props.stores, showStoreNames]);
+
+  const getFocusedCenter = useCallback((map: kakao.maps.Map, storeCenter: kakao.maps.LatLng) => {
+    if (!props.focusRequest.offsetForPanel) return storeCenter;
+    const projection = map.getProjection();
+    const storePoint = projection.pointFromCoords(storeCenter);
+    const desktop = window.matchMedia("(min-width: 901px)").matches;
+    const centerOffsetX = desktop ? -190 : 0;
+    const centerOffsetY = desktop ? 0 : props.mobileSearchBottomInset / 2;
+    return projection.coordsFromPoint(new kakao.maps.Point(
+      storePoint.x + centerOffsetX,
+      storePoint.y + centerOffsetY,
+    ));
+  }, [props.focusRequest.offsetForPanel, props.mobileSearchBottomInset]);
+
+  const cancelMapMovement = useCallback(() => {
+    if (mapMovementFrameRef.current !== null) {
+      window.cancelAnimationFrame(mapMovementFrameRef.current);
+    }
+    mapMovementFrameRef.current = null;
+    mapMovementActiveRef.current = false;
+    mapWrapRef.current?.removeAttribute("data-moving");
+  }, []);
+
+  const animateMapCenter = useCallback((map: kakao.maps.Map, target: kakao.maps.LatLng) => {
+    cancelMapMovement();
+    const start = map.getCenter();
+    const projection = map.getProjection();
+    const startPoint = projection.containerPointFromCoords(start);
+    const targetPoint = projection.containerPointFromCoords(target);
+    const pixelDistance = Math.hypot(targetPoint.x - startPoint.x, targetPoint.y - startPoint.y);
+
+    if (pixelDistance < 2 || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      map.setCenter(target);
+      return;
+    }
+
+    const duration = Math.min(380, Math.max(190, 170 + pixelDistance * .055));
+    const startedAt = performance.now();
+    let lastRenderedAt = startedAt - 24;
+    const startLatitude = start.getLat();
+    const startLongitude = start.getLng();
+    const latitudeDistance = target.getLat() - startLatitude;
+    const longitudeDistance = target.getLng() - startLongitude;
+    mapMovementActiveRef.current = true;
+    mapWrapRef.current?.setAttribute("data-moving", "true");
+
+    const move = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / duration);
+      if (progress < 1 && now - lastRenderedAt < 24) {
+        mapMovementFrameRef.current = window.requestAnimationFrame(move);
+        return;
+      }
+      lastRenderedAt = now;
+      const eased = progress * progress * (3 - 2 * progress);
+      map.setCenter(new kakao.maps.LatLng(
+        startLatitude + latitudeDistance * eased,
+        startLongitude + longitudeDistance * eased,
+      ));
+      if (progress < 1) {
+        mapMovementFrameRef.current = window.requestAnimationFrame(move);
+      } else {
+        mapMovementFrameRef.current = null;
+        mapMovementActiveRef.current = false;
+        mapWrapRef.current?.removeAttribute("data-moving");
+      }
+    };
+
+    mapMovementFrameRef.current = window.requestAnimationFrame(move);
+  }, [cancelMapMovement]);
 
   function configureZoomBounds(map: kakao.maps.Map) {
     const bounds = map.getBounds();
@@ -111,21 +224,36 @@ function KakaoMapCanvas(props: BakeryMapProps) {
   useEffect(() => {
     const map = mapRef.current;
     if (!map || loading || error) return;
+    cancelMapMovement();
     const requestedLevel = props.focusRequest.preserveLevel
       ? map.getLevel()
       : Math.min(maximumLevel, Math.max(1, props.focusRequest.level));
-    if (!props.focusRequest.preserveLevel) map.setLevel(requestedLevel);
-    map.setCenter(new kakao.maps.LatLng(
+    const storeCenter = new kakao.maps.LatLng(
       props.focusRequest.center.latitude,
       props.focusRequest.center.longitude,
-    ));
-    setMapLevel(requestedLevel);
+    );
+    const moveToStore = () => {
+      animateMapCenter(map, getFocusedCenter(map, storeCenter));
+    };
 
-    if (props.focusRequest.offsetForPanel && window.matchMedia("(min-width: 901px)").matches) {
-      const frame = window.requestAnimationFrame(() => map.panBy(-190, 0));
-      return () => window.cancelAnimationFrame(frame);
+    if (props.focusRequest.preserveLevel || map.getLevel() === requestedLevel) {
+      moveToStore();
+    } else {
+      map.setLevel(requestedLevel);
+      setMapLevel(requestedLevel);
+      mapMovementFrameRef.current = window.requestAnimationFrame(() => {
+        mapMovementFrameRef.current = window.requestAnimationFrame(moveToStore);
+      });
     }
-  }, [error, loading, maximumLevel, props.focusRequest]);
+
+    return cancelMapMovement;
+  }, [animateMapCenter, cancelMapMovement, error, getFocusedCenter, loading, maximumLevel, props.focusRequest]);
+
+  useEffect(() => () => {
+    if (initialViewportFrameRef.current !== null) {
+      window.cancelAnimationFrame(initialViewportFrameRef.current);
+    }
+  }, []);
 
   if (loading) return <div className="map-loading">지도를 불러오는 중…</div>;
   if (error) return <MapUnavailable onLocate={props.onLocate} />;
@@ -142,52 +270,106 @@ function KakaoMapCanvas(props: BakeryMapProps) {
     map.setLevel(map.getLevel() + 1);
   }
 
-  const showStoreNames = mapLevel <= 4;
+  function getSearchViewport(map: kakao.maps.Map): MapViewport {
+    const fullBounds = map.getBounds();
+    const mapElement = mapWrapRef.current;
+    const useVisibleMobileArea = window.matchMedia("(max-width: 900px)").matches
+      && props.mobileSearchBottomInset > 0
+      && mapElement;
+
+    if (!useVisibleMobileArea) {
+      const center = map.getCenter();
+      return {
+        center: { latitude: center.getLat(), longitude: center.getLng() },
+        bounds: {
+          south: fullBounds.getSouthWest().getLat(),
+          north: fullBounds.getNorthEast().getLat(),
+          west: fullBounds.getSouthWest().getLng(),
+          east: fullBounds.getNorthEast().getLng(),
+        },
+        level: map.getLevel(),
+      };
+    }
+
+    const width = mapElement.clientWidth;
+    const height = mapElement.clientHeight;
+    const visibleBottom = Math.max(1, height - Math.min(props.mobileSearchBottomInset, height - 1));
+    const projection = map.getProjection();
+    const northEast = projection.coordsFromContainerPoint(new kakao.maps.Point(width, 0));
+    const southWest = projection.coordsFromContainerPoint(new kakao.maps.Point(0, visibleBottom));
+    const visibleCenter = projection.coordsFromContainerPoint(new kakao.maps.Point(width / 2, visibleBottom / 2));
+
+    return {
+      center: {
+        latitude: visibleCenter.getLat(),
+        longitude: visibleCenter.getLng(),
+      },
+      bounds: {
+        south: southWest.getLat(),
+        north: northEast.getLat(),
+        west: southWest.getLng(),
+        east: northEast.getLng(),
+      },
+      level: map.getLevel(),
+    };
+  }
 
   return (
-    <div className="map-wrap" data-map-level={mapLevel} data-max-map-level={maximumLevel}>
+    <div ref={mapWrapRef} className="map-wrap" data-map-level={mapLevel} data-max-map-level={maximumLevel}>
       <Map
         center={{ lat: props.center.latitude, lng: props.center.longitude }}
         isPanto
-        level={5}
+        level={mapLevel}
         zoomable
         scrollwheel
         keyboardShortcuts
         className="kakao-map"
         onCreate={(map) => {
+          if (mapRef.current === map) return;
           mapRef.current = map;
           configureZoomBounds(map);
           constrainToDaejeon(map);
-          setMapLevel(map.getLevel());
+          const requestedLevel = props.focusRequest.preserveLevel
+            ? map.getLevel()
+            : Math.min(maximumLevel, Math.max(1, props.focusRequest.level));
+          if (!props.focusRequest.preserveLevel) map.setLevel(requestedLevel);
+          const storeCenter = new kakao.maps.LatLng(
+            props.focusRequest.center.latitude,
+            props.focusRequest.center.longitude,
+          );
+          map.setCenter(getFocusedCenter(map, storeCenter));
+          setMapLevel(requestedLevel);
+          initialViewportFrameRef.current = window.requestAnimationFrame(() => {
+            initialViewportFrameRef.current = null;
+            if (mapRef.current !== map) return;
+            constrainToDaejeon(map);
+            props.onViewportChange(getSearchViewport(map));
+          });
         }}
-        onCenterChanged={constrainToDaejeon}
+        onCenterChanged={(map) => {
+          if (!mapMovementActiveRef.current) constrainToDaejeon(map);
+        }}
         onZoomChanged={(map) => {
           setMapLevel(map.getLevel());
           constrainToDaejeon(map);
         }}
         onBoundsChanged={(map) => {
           configureZoomBounds(map);
-          constrainToDaejeon(map);
+          if (!mapMovementActiveRef.current) constrainToDaejeon(map);
+        }}
+        onDragStart={() => {
+          cancelMapMovement();
+          mapDragRef.current = true;
+        }}
+        onDragEnd={() => {
+          window.setTimeout(() => {
+            mapDragRef.current = false;
+          }, 0);
         }}
         onIdle={(map) => {
+          if (mapMovementActiveRef.current) return;
           constrainToDaejeon(map);
-          const center = map.getCenter();
-          const bounds = map.getBounds();
-          const southWest = bounds.getSouthWest();
-          const northEast = bounds.getNorthEast();
-          props.onViewportChange({
-            center: {
-              latitude: center.getLat(),
-              longitude: center.getLng(),
-            },
-            bounds: {
-              south: southWest.getLat(),
-              north: northEast.getLat(),
-              west: southWest.getLng(),
-              east: northEast.getLng(),
-            },
-            level: map.getLevel(),
-          });
+          props.onViewportChange(getSearchViewport(map));
         }}
         onClick={props.onMapClick}
       >
@@ -205,23 +387,26 @@ function KakaoMapCanvas(props: BakeryMapProps) {
         ) : null}
         {props.stores.map((store) => {
           const selected = props.selectedStoreId === store.id;
+          const showMarkerName = showStoreNames || selected;
           const congestion = props.congestionByStore.get(store.id);
           const congestionLabel = congestion ? congestionCopy[congestion.current].shortLabel : null;
+          const markerOffset = markerOffsetByStore.get(store.id) ?? { x: 0, y: 0 };
           return (
             <CustomOverlayMap
               key={store.id}
               position={{ lat: store.latitude, lng: store.longitude }}
               xAnchor={0.5}
-              yAnchor={showStoreNames ? 0.28 : 0.5}
+              yAnchor={0.5}
               zIndex={selected ? 20 : 10}
             >
-              <button
-                type="button"
+              <div
                 className="bakery-label-marker"
                 data-selected={selected}
-                data-name-visible={showStoreNames}
-                aria-label={congestionLabel ? `${store.name}, 혼잡도 ${congestionLabel}` : store.name}
-                onClick={() => props.onSelect(store.id)}
+                data-name-visible={showMarkerName}
+                style={{
+                  "--marker-offset-x": `${markerOffset.x}px`,
+                  "--marker-offset-y": `${markerOffset.y}px`,
+                } as CSSProperties}
               >
                 {congestion ? (
                   <span
@@ -233,9 +418,50 @@ function KakaoMapCanvas(props: BakeryMapProps) {
                     {showStoreNames ? congestionLabel : null}
                   </span>
                 ) : null}
-                <span className="bakery-label-icon" aria-hidden="true"><Wheat size={13} /></span>
-                {showStoreNames ? <span className="bakery-label-name">{store.name}</span> : null}
-              </button>
+                <button
+                  type="button"
+                  className="bakery-label-icon"
+                  aria-label={congestionLabel ? `${store.name}, 혼잡도 ${congestionLabel}` : store.name}
+                  onPointerDown={(event) => {
+                    markerPointerRef.current = {
+                      pointerId: event.pointerId,
+                      storeId: store.id,
+                      startX: event.clientX,
+                      startY: event.clientY,
+                      moved: false,
+                    };
+                  }}
+                  onPointerMove={(event) => {
+                    const pointer = markerPointerRef.current;
+                    if (
+                      !pointer
+                      || pointer.pointerId !== event.pointerId
+                      || pointer.storeId !== store.id
+                    ) return;
+                    if (Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) >= 6) {
+                      pointer.moved = true;
+                    }
+                  }}
+                  onPointerCancel={() => {
+                    markerPointerRef.current = null;
+                  }}
+                  onClick={(event) => {
+                    const pointer = markerPointerRef.current;
+                    const dragged = mapDragRef.current
+                      || (pointer?.storeId === store.id && pointer.moved);
+                    markerPointerRef.current = null;
+                    if (dragged) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      return;
+                    }
+                    props.onSelect(store.id);
+                  }}
+                >
+                  <Wheat aria-hidden="true" size={13} />
+                </button>
+                {showMarkerName ? <span className="bakery-label-name">{store.name}</span> : null}
+              </div>
             </CustomOverlayMap>
           );
         })}
@@ -260,7 +486,14 @@ function KakaoMapCanvas(props: BakeryMapProps) {
       >
         <Crosshair aria-hidden="true" size={18} />
       </button>
-      <button type="button" className="map-search-here" onClick={props.onSearchHere}>
+      <button
+        type="button"
+        className="map-search-here"
+        onClick={() => {
+          const map = mapRef.current;
+          if (map) props.onSearchHere(getSearchViewport(map));
+        }}
+      >
         <Search aria-hidden="true" size={16} /> 현재 위치에서 검색
       </button>
     </div>

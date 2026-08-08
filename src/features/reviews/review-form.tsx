@@ -75,7 +75,6 @@ export function ReviewForm({ storeId }: { storeId: number }) {
           content: values.content.trim(),
           imageKeys,
         },
-        memberId,
         accessToken,
       );
     },
@@ -117,13 +116,12 @@ export function ReviewForm({ storeId }: { storeId: number }) {
 
       <form className="review-form" onSubmit={handleSubmit((values) => createMutation.mutate(values))}>
         <header>
-          <p className="eyebrow">MY BREAD NOTE</p>
-          <h1>오늘 만난 빵을<br />기록해 보세요.</h1>
-          <p>솔직한 한 줄이 다음 빵친구의 헛걸음을 줄여줘요.</p>
+          <p className="eyebrow">BREAD NOTE</p>
+          <h1>빵명록 작성</h1>
         </header>
 
         <fieldset className="form-section">
-          <legend><span>01</span> 빵은 어땠나요?</legend>
+          <legend>별점 <b className="required-mark" aria-label="필수">*</b></legend>
           <div className="rating-input" role="radiogroup" aria-label="별점">
             {[1, 2, 3, 4, 5].map((value) => (
               <button
@@ -142,7 +140,7 @@ export function ReviewForm({ storeId }: { storeId: number }) {
         </fieldset>
 
         <label className="form-section">
-          <span className="form-label"><b>02</b> 어떤 빵을 샀나요?</span>
+          <span className="form-label">구매한 메뉴 <b className="required-mark" aria-label="필수">*</b></span>
           <input
             className="field"
             placeholder="예: 소금빵, 명란바게트"
@@ -158,7 +156,7 @@ export function ReviewForm({ storeId }: { storeId: number }) {
         </label>
 
         <label className="form-section">
-          <span className="form-label"><b>03</b> 빵친구에게 들려주세요.</span>
+          <span className="form-label">빵명록 <b className="required-mark" aria-label="필수">*</b></span>
           <textarea
             className="field review-textarea"
             placeholder="맛, 대기 시간, 다시 사고 싶은 메뉴를 자유롭게 적어주세요."
@@ -174,7 +172,7 @@ export function ReviewForm({ storeId }: { storeId: number }) {
         </label>
 
         <div className="form-section">
-          <span className="form-label"><b>04</b> 사진도 남겨볼까요? <em>선택</em></span>
+          <span className="form-label">사진 <em>선택</em></span>
           <div className="image-picker">
             <label>
               <Camera aria-hidden="true" size={23} />

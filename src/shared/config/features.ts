@@ -1,5 +1,5 @@
 export const featureFlags = {
-  memberProfileEditing: false,
-  memberNameEditing: false,
-  reviewWriting: false,
+  memberProfileEditing: true,
+  memberNameEditing: true,
+  reviewWriting: true,
 } as const;

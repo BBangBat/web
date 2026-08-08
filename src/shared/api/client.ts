@@ -1,8 +1,15 @@
 import type { ApiErrorBody } from "@/entities/types";
+import {
+  emitAccessTokenRefreshed,
+  emitAuthSessionExpired,
+} from "@/shared/lib/auth-events";
 
 type ApiRequestOptions = RequestInit & {
   accessToken?: string | null;
+  retryUnauthorized?: boolean;
 };
+
+let refreshRequest: Promise<string> | null = null;
 
 export class ApiError extends Error {
   readonly status: number;
@@ -29,9 +36,33 @@ function parseRetryAfterSeconds(value: string | null): number | undefined {
   return Math.max(0, Math.ceil((retryAt - Date.now()) / 1_000));
 }
 
+function isAuthenticationFailure(error: unknown) {
+  return error instanceof ApiError && error.status === 401;
+}
+
+export function refreshAccessToken() {
+  if (refreshRequest) return refreshRequest;
+
+  const request = apiRequest<{ accessToken: string }>("/auth/token/refresh", {
+    method: "POST",
+    retryUnauthorized: false,
+  }).then(({ accessToken }) => {
+    if (!accessToken) throw new Error("갱신된 로그인 정보를 확인하지 못했어요.");
+    return accessToken;
+  });
+
+  refreshRequest = request;
+  void request.finally(() => {
+    if (refreshRequest === request) refreshRequest = null;
+  }).catch(() => {
+    // The caller receives and handles the original rejection.
+  });
+  return request;
+}
+
 export async function apiRequest<T>(
   path: string,
-  { accessToken, ...init }: ApiRequestOptions = {},
+  { accessToken, retryUnauthorized = true, ...init }: ApiRequestOptions = {},
 ): Promise<T> {
   const headers = new Headers(init.headers);
 
@@ -48,6 +79,26 @@ export async function apiRequest<T>(
     headers,
     credentials: "include",
   });
+
+  if (response.status === 401 && accessToken && retryUnauthorized) {
+    try {
+      const refreshedAccessToken = await refreshAccessToken();
+      emitAccessTokenRefreshed(refreshedAccessToken);
+      try {
+        return await apiRequest<T>(path, {
+          ...init,
+          accessToken: refreshedAccessToken,
+          retryUnauthorized: false,
+        });
+      } catch (retryError) {
+        if (isAuthenticationFailure(retryError)) emitAuthSessionExpired();
+        throw retryError;
+      }
+    } catch (refreshError) {
+      if (isAuthenticationFailure(refreshError)) emitAuthSessionExpired();
+      throw refreshError;
+    }
+  }
 
   if (!response.ok) {
     let body: ApiErrorBody | null = null;

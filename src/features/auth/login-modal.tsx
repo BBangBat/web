@@ -22,7 +22,10 @@ const LoginModalContext = createContext<LoginModalContextValue | null>(null);
 
 export function LoginModalProvider({ children }: { children: ReactNode }) {
   const { prepareSocialLogin } = useAuth();
-  const [modal, setModal] = useState({ open: false, returnTo: "/" });
+  const [modal, setModal] = useState({
+    open: false,
+    returnTo: "/",
+  });
 
   const openLogin = useCallback((returnTo = "/") => {
     setModal({ open: true, returnTo });
@@ -68,14 +71,14 @@ export function LoginModalProvider({ children }: { children: ReactNode }) {
               <a
                 className="social-button social-kakao"
                 href={bbangbatApi.socialLoginUrl("kakao", window.location.origin)}
-                onClick={() => prepareSocialLogin(modal.returnTo)}
+                onClick={() => prepareSocialLogin(modal.returnTo, "KAKAO")}
               >
                 <span aria-hidden="true">K</span> 카카오로 시작하기
               </a>
               <a
                 className="social-button social-naver"
                 href={bbangbatApi.socialLoginUrl("naver", window.location.origin)}
-                onClick={() => prepareSocialLogin(modal.returnTo)}
+                onClick={() => prepareSocialLogin(modal.returnTo, "NAVER")}
               >
                 <span aria-hidden="true">N</span> 네이버로 시작하기
               </a>

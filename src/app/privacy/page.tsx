@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import { PrivacyContent } from "@/features/legal/legal-content";
 
 export default function PrivacyPage() {
   return (
@@ -8,69 +9,7 @@ export default function PrivacyPage() {
         <ArrowLeft aria-hidden="true" size={21} />
         <span>지도로 돌아가기</span>
       </Link>
-      <header className="legal-header">
-        <h1>개인정보처리방침</h1>
-        <p className="legal-meta">
-          <span>버전 1.0</span>
-          <span>시행일: 2026년 8월 7일</span>
-        </p>
-      </header>
-
-      <section>
-        <h2>1. 개인정보의 처리 목적</h2>
-        <p>회원 가입과 본인 식별, 나만의 빵지도·빵명록·실시간 톡 제공, 서비스 품질 개선과 부정 이용 방지를 위해 개인정보를 처리합니다.</p>
-      </section>
-
-      <section>
-        <h2>2. 처리하는 개인정보 항목</h2>
-        <ul>
-          <li><strong>소셜 로그인</strong>: 소셜 계정 식별자, 이메일, 이름 또는 프로필 정보</li>
-          <li><strong>회원 정보</strong>: 닉네임, 프로필 이미지, 성별, 연령대</li>
-          <li><strong>서비스 이용</strong>: 즐겨찾기, 빵명록, 실시간 톡, 혼잡도 투표 및 이용 기록</li>
-          <li><strong>위치 정보</strong>: 주변 빵집 조회와 가게 근처 참여 확인을 위해 이용자가 허용한 경우에만 처리</li>
-          <li><strong>자동 생성 정보</strong>: 접속 기록, 기기·브라우저 정보, 쿠키 등 서비스 이용 기록</li>
-        </ul>
-      </section>
-
-      <section>
-        <h2>3. 보유 및 이용 기간</h2>
-        <p>개인정보는 회원 탈퇴 또는 처리 목적 달성 시 지체 없이 파기합니다. 다만 관계 법령에 따라 보존할 의무가 있는 정보는 해당 기간 동안 별도로 보관합니다.</p>
-      </section>
-
-      <section>
-        <h2>4. 제3자 제공 및 처리 위탁</h2>
-        <p>빵밭은 이용자의 동의 또는 법령상 근거 없이 개인정보를 제3자에게 제공하지 않습니다. 서비스 운영을 위해 처리를 위탁하는 경우 수탁자와 위탁 업무를 이 방침에 공개하고 필요한 보호조치를 적용합니다.</p>
-      </section>
-
-      <section>
-        <h2>5. 개인정보의 파기</h2>
-        <p>전자적 파일은 복구할 수 없는 방법으로 삭제하고, 출력물 등은 분쇄 또는 소각합니다. 법령에 따라 보관하는 정보는 다른 개인정보와 분리하여 관리합니다.</p>
-      </section>
-
-      <section>
-        <h2>6. 이용자의 권리</h2>
-        <p>이용자는 자신의 개인정보에 대해 열람, 정정, 삭제, 처리정지 및 동의 철회를 요청할 수 있습니다. 회원 탈퇴는 마이페이지에서 요청할 수 있으며, 관련 문의는 빵밭 운영팀에 접수할 수 있습니다.</p>
-      </section>
-
-      <section>
-        <h2>7. 개인정보 보호조치</h2>
-        <p>접근 권한 최소화, 전송 구간 암호화, 인증 정보 보호, 접속 기록 점검 등 개인정보의 안전성 확보에 필요한 기술적·관리적 조치를 적용합니다.</p>
-      </section>
-
-      <section>
-        <h2>8. 쿠키 및 인증 정보</h2>
-        <p>로그인 상태 유지와 서비스 제공에 필요한 쿠키 또는 유사 저장 기술을 사용할 수 있습니다. 브라우저 설정에서 저장을 거부할 수 있으나 일부 기능 이용이 제한될 수 있습니다.</p>
-      </section>
-
-      <section>
-        <h2>9. 개인정보 보호 문의</h2>
-        <p>개인정보 관련 문의와 권리 행사는 빵밭 운영팀 이메일 <a href="mailto:bbangbat.team@gmail.com">bbangbat.team@gmail.com</a>으로 접수할 수 있습니다.</p>
-      </section>
-
-      <section>
-        <h2>10. 방침의 변경</h2>
-        <p>이 방침이 변경되는 경우 시행일 전에 서비스 화면을 통해 안내합니다.</p>
-      </section>
+      <PrivacyContent />
     </main>
   );
 }

@@ -4,6 +4,7 @@ import type {
   Coordinates,
   CreateReviewPayload,
   Member,
+  MemberSocial,
   MemberStats,
   MyReview,
   PresignedUpload,
@@ -12,12 +13,13 @@ import type {
   Store,
   StoreBounds,
   StoreSearchResult,
+  SocialProvider,
   TalkMessage,
   TalkSummary,
   UpdateProfilePayload,
 } from "@/entities/types";
 import { env } from "@/shared/config/env";
-import { ApiError, apiRequest } from "./client";
+import { ApiError, apiRequest, refreshAccessToken } from "./client";
 
 function idsQuery(ids: number[]): string {
   return ids.map(String).join(",");
@@ -138,8 +140,8 @@ export const bbangbatApi = {
     );
   },
 
-  sendTalk(storeId: number, content: string, memberId: string, accessToken: string) {
-    return apiRequest<TalkMessage>(`/api/talks?authorId=${encodeURIComponent(memberId)}`, {
+  sendTalk(storeId: number, content: string, accessToken: string) {
+    return apiRequest<TalkMessage>("/api/talks", {
       method: "POST",
       accessToken,
       body: JSON.stringify({ storeId, content }),
@@ -150,8 +152,8 @@ export const bbangbatApi = {
     return apiRequest<Review[]>(`/api/reviews?storeId=${storeId}`);
   },
 
-  getMyReviews(memberId: string, accessToken: string) {
-    return apiRequest<MyReview[]>(`/api/reviews/me?memberId=${encodeURIComponent(memberId)}`, { accessToken });
+  getMyReviews(accessToken: string) {
+    return apiRequest<MyReview[]>("/api/reviews/me", { accessToken });
   },
 
   async uploadReviewImages(files: File[], accessToken: string) {
@@ -183,41 +185,44 @@ export const bbangbatApi = {
     return uploads.map((upload) => upload.objectKey);
   },
 
-  createReview(payload: CreateReviewPayload, memberId: string, accessToken: string) {
-    return apiRequest<Review>(`/api/reviews?memberId=${encodeURIComponent(memberId)}`, {
+  createReview(payload: CreateReviewPayload, accessToken: string) {
+    return apiRequest<Review>("/api/reviews", {
       method: "POST",
       accessToken,
       body: JSON.stringify(payload),
     });
   },
 
-  deleteReview(reviewId: number, memberId: string, accessToken: string) {
-    return apiRequest<void>(`/api/reviews/${reviewId}?memberId=${encodeURIComponent(memberId)}`, {
+  deleteReview(reviewId: number, accessToken: string) {
+    return apiRequest<void>(`/api/reviews/${reviewId}`, {
       method: "DELETE",
       accessToken,
     });
   },
 
-  getFavorites(memberId: string, accessToken: string) {
-    return apiRequest<number[]>(`/api/members/favorites?memberId=${encodeURIComponent(memberId)}`, { accessToken });
+  getFavorites(accessToken: string) {
+    return apiRequest<number[]>("/api/members/favorites", { accessToken });
   },
 
-  addFavorite(storeId: number, memberId: string, accessToken: string) {
-    return apiRequest<void>(`/api/members/favorites/${storeId}?memberId=${encodeURIComponent(memberId)}`, {
+  addFavorite(storeId: number, accessToken: string) {
+    return apiRequest<void>(`/api/members/favorites/${storeId}`, {
       method: "POST",
       accessToken,
     });
   },
 
-  removeFavorite(storeId: number, memberId: string, accessToken: string) {
-    return apiRequest<void>(`/api/members/favorites/${storeId}?memberId=${encodeURIComponent(memberId)}`, {
+  removeFavorite(storeId: number, accessToken: string) {
+    return apiRequest<void>(`/api/members/favorites/${storeId}`, {
       method: "DELETE",
       accessToken,
     });
   },
 
-  getMe(memberId: string, accessToken: string) {
-    return apiRequest<Member>(`/api/members/me?memberId=${encodeURIComponent(memberId)}`, { accessToken });
+  getMe(accessToken: string) {
+    return apiRequest<Member>("/api/members/me", {
+      accessToken,
+      retryUnauthorized: false,
+    });
   },
 
   updateProfile(payload: UpdateProfilePayload, accessToken: string) {
@@ -225,6 +230,13 @@ export const bbangbatApi = {
       method: "PATCH",
       accessToken,
       body: JSON.stringify(payload),
+    });
+  },
+
+  withdraw(accessToken: string) {
+    return apiRequest<void>("/api/members/me", {
+      method: "DELETE",
+      accessToken,
     });
   },
 
@@ -244,20 +256,21 @@ export const bbangbatApi = {
         method: "PUT",
         headers: { "Content-Type": file.type },
         body: file,
+        credentials: "omit",
       });
     } catch {
-      throw new Error("프로필 이미지 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.");
+      throw new Error("S3에 연결하지 못했어요. 버킷 CORS와 presigned URL 서명을 확인해 주세요.");
     }
 
     if (!response.ok) {
-      throw new Error("프로필 이미지 업로드에 실패했어요. 잠시 후 다시 시도해 주세요.");
+      throw new Error(`S3가 프로필 이미지 업로드를 거부했어요. (HTTP ${response.status})`);
     }
 
     return upload.objectKey;
   },
 
-  getMemberStats(memberId: string, accessToken: string) {
-    return apiRequest<MemberStats>(`/api/members/me/stats?memberId=${encodeURIComponent(memberId)}`, { accessToken });
+  getMemberStats(accessToken: string) {
+    return apiRequest<MemberStats>("/api/members/me/stats", { accessToken });
   },
 
   checkNickname(nickname: string) {
@@ -280,10 +293,27 @@ export const bbangbatApi = {
     });
   },
 
-  refreshToken() {
-    return apiRequest<{ accessToken: string }>("/auth/token/refresh", {
+  getMySocials(accessToken: string) {
+    return apiRequest<MemberSocial[]>("/api/members/me/socials", { accessToken });
+  },
+
+  linkSocial(tempToken: string, accessToken: string) {
+    return apiRequest<MemberSocial[]>("/api/members/me/socials", {
       method: "POST",
+      accessToken,
+      body: JSON.stringify({ tempToken }),
     });
+  },
+
+  unlinkSocial(provider: SocialProvider, accessToken: string) {
+    return apiRequest<void>(`/api/members/social/${provider}`, {
+      method: "DELETE",
+      accessToken,
+    });
+  },
+
+  async refreshToken() {
+    return { accessToken: await refreshAccessToken() };
   },
 
   logout(accessToken: string) {
@@ -296,5 +326,21 @@ export const bbangbatApi = {
   socialLoginUrl(provider: "kakao" | "naver", redirectOrigin: string) {
     const redirect = encodeURIComponent(redirectOrigin);
     return `${env.oauthBaseUrl}/oauth2/authorization/${provider}?redirect_uri=${redirect}`;
+  },
+
+  socialLinkUrl(provider: "kakao" | "naver", redirectOrigin: string) {
+    const search = new URLSearchParams({
+      purpose: "link",
+      redirect_uri: redirectOrigin,
+    });
+    return `${env.oauthBaseUrl}/oauth2/authorization/${provider}?${search.toString()}`;
+  },
+
+  socialUnlinkUrl(provider: "kakao" | "naver", redirectOrigin: string) {
+    const search = new URLSearchParams({
+      purpose: "unlink",
+      redirect_uri: redirectOrigin,
+    });
+    return `${env.oauthBaseUrl}/oauth2/authorization/${provider}?${search.toString()}`;
   },
 };

@@ -184,7 +184,7 @@ export function StoreMapPanel({ store, congestion, summary, placement = "floatin
   });
   const favoritesQuery = useQuery({
     queryKey: ["favorites", memberId],
-    queryFn: () => bbangbatApi.getFavorites(memberId!, accessToken!),
+    queryFn: () => bbangbatApi.getFavorites(accessToken!),
     enabled: Boolean(accessToken && memberId),
   });
 
@@ -208,8 +208,8 @@ export function StoreMapPanel({ store, congestion, summary, placement = "floatin
   const favoriteMutation = useMutation({
     mutationFn: (nextFavorite: boolean) =>
       nextFavorite
-        ? bbangbatApi.addFavorite(store.id, memberId!, accessToken!)
-        : bbangbatApi.removeFavorite(store.id, memberId!, accessToken!),
+        ? bbangbatApi.addFavorite(store.id, accessToken!)
+        : bbangbatApi.removeFavorite(store.id, accessToken!),
     onMutate: (nextFavorite) =>
       optimisticallySetFavorite(queryClient, memberId!, store, nextFavorite),
     onSuccess: (_data, nextFavorite) => {
@@ -290,7 +290,7 @@ export function StoreMapPanel({ store, congestion, summary, placement = "floatin
   });
 
   const talkMutation = useMutation({
-    mutationFn: (content: string) => bbangbatApi.sendTalk(store.id, content, memberId!, accessToken!),
+    mutationFn: (content: string) => bbangbatApi.sendTalk(store.id, content, accessToken!),
     onSuccess: async () => {
       setTalkContent("");
       await Promise.all([
@@ -418,7 +418,7 @@ export function StoreMapPanel({ store, congestion, summary, placement = "floatin
                   <span>가게 근처에서만 투표 가능</span>
                   <span>{voteCooldownMinutes > 0
                     ? `${voteCooldownMinutes}분 뒤 투표 가능`
-                    : `투표 후 ${CONGESTION_VOTE_COOLDOWN_MINUTES}분 뒤 다시 투표 가능`}</span>
+                    : `투표 후 ${CONGESTION_VOTE_COOLDOWN_MINUTES}분 뒤 재투표 가능`}</span>
                 </small>
               </div>
               <div className="map-panel-vote-options">

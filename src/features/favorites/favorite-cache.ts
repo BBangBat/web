@@ -13,7 +13,7 @@ export function withFavoriteState(
   storeId: number,
   nextFavorite: boolean,
 ) {
-  if (nextFavorite) return favoriteIds.includes(storeId) ? favoriteIds : [...favoriteIds, storeId];
+  if (nextFavorite) return favoriteIds.includes(storeId) ? favoriteIds : [storeId, ...favoriteIds];
   return favoriteIds.filter((favoriteId) => favoriteId !== storeId);
 }
 
@@ -23,7 +23,7 @@ function withFavoriteStoreState(
   nextFavorite: boolean,
 ) {
   if (!stores) return stores;
-  if (nextFavorite) return stores.some((item) => item.id === store.id) ? stores : [...stores, store];
+  if (nextFavorite) return stores.some((item) => item.id === store.id) ? stores : [store, ...stores];
   return stores.filter((item) => item.id !== store.id);
 }
 

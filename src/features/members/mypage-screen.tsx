@@ -17,19 +17,31 @@ import {
   Star,
   X,
 } from "lucide-react";
+import type { SocialProvider, Store } from "@/entities/types";
 import { useAuth } from "@/features/auth/auth-context";
+import { SOCIAL_LINK_MEMBER_KEY } from "@/features/auth/social-link-flow";
+import {
+  optimisticallySetFavorite,
+  rollbackFavoriteCache,
+} from "@/features/favorites/favorite-cache";
 import { useLoginModal } from "@/features/auth/login-modal";
 import { MemberAvatar } from "@/features/members/member-avatar";
 import { StoreCard } from "@/features/stores/store-card";
 import { bbangbatApi } from "@/shared/api/bbangbat-api";
+import { ApiError } from "@/shared/api/client";
 import { featureFlags } from "@/shared/config/features";
 import {
   compactAddress,
-  congestionCopy,
   hasStoreImage,
   relativeTime,
 } from "@/shared/lib/format";
-import { isValidNickname, limitTextInput } from "@/shared/lib/text-input";
+import {
+  isValidName,
+  isValidNickname,
+  limitTextInput,
+  NAME_MAX_LENGTH,
+  NICKNAME_MAX_LENGTH,
+} from "@/shared/lib/text-input";
 import { useFeedback } from "@/shared/ui/feedback-provider";
 import { LoadingState } from "@/shared/ui/states";
 
@@ -42,6 +54,14 @@ const activityNavigation = [
 ] as const;
 
 const supportedProfileImageTypes = ["image/jpeg", "image/png", "image/webp"];
+const WITHDRAWAL_REAUTH_MEMBER_KEY = "bbangbat:withdrawal-reauth-member";
+const WITHDRAWAL_REAUTH_RETURN_TO = "/mypage?tab=profile&withdraw=reauthenticated";
+const SOCIAL_UNLINK_MEMBER_KEY = "bbangbat:social-unlink-member";
+const socialProviders = ["KAKAO", "NAVER"] as const satisfies readonly SocialProvider[];
+const socialProviderCopy = {
+  KAKAO: { label: "카카오", symbol: "K", value: "kakao" },
+  NAVER: { label: "네이버", symbol: "N", value: "naver" },
+} as const;
 
 function MypageMapLink() {
   return (
@@ -64,29 +84,44 @@ function formatWrittenDate(value: string | null) {
 export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { accessToken, memberId, member, status, updateMember, logout } = useAuth();
+  const {
+    accessToken,
+    memberId,
+    member,
+    currentSocialProvider,
+    status,
+    updateMember,
+    prepareSocialLogin,
+    logout,
+  } = useAuth();
   const { openLogin } = useLoginModal();
   const { notify } = useFeedback();
-  const [profileModal, setProfileModal] = useState<"nickname" | "avatar-preview" | "avatar-edit" | null>(null);
+  const [profileModal, setProfileModal] = useState<"profile" | "avatar-preview" | "withdraw" | null>(null);
   const [nicknameDraft, setNicknameDraft] = useState("");
+  const [profileImageDraft, setProfileImageDraft] = useState<File | null>(null);
+  const [profileImagePreviewUrl, setProfileImagePreviewUrl] = useState<string | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
+  const [withdrawalPending, setWithdrawalPending] = useState(false);
   const modalTriggerRef = useRef<HTMLElement | null>(null);
   const profileImageInputRef = useRef<HTMLInputElement>(null);
   const signingOutRef = useRef(false);
+  const withdrawalPendingRef = useRef(false);
+  const withdrawalResumeRef = useRef(false);
+  const socialUnlinkResumeRef = useRef(false);
   const statsQuery = useQuery({
     queryKey: ["member-stats", memberId],
-    queryFn: () => bbangbatApi.getMemberStats(memberId!, accessToken!),
+    queryFn: () => bbangbatApi.getMemberStats(accessToken!),
     enabled: Boolean(accessToken && memberId),
   });
   const reviewsQuery = useQuery({
     queryKey: ["my-reviews", memberId],
-    queryFn: () => bbangbatApi.getMyReviews(memberId!, accessToken!),
+    queryFn: () => bbangbatApi.getMyReviews(accessToken!),
     enabled: Boolean(accessToken && memberId) && (initialTab === "overview" || initialTab === "reviews"),
   });
   const favoriteIdsQuery = useQuery({
     queryKey: ["favorites", memberId],
-    queryFn: () => bbangbatApi.getFavorites(memberId!, accessToken!),
+    queryFn: () => bbangbatApi.getFavorites(accessToken!),
     enabled: Boolean(accessToken && memberId) && (initialTab === "overview" || initialTab === "favorites"),
   });
   const requestedFavoriteIds = initialTab === "overview"
@@ -97,14 +132,23 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
     queryFn: () => bbangbatApi.getStoresBulk(requestedFavoriteIds),
     enabled: favoriteIdsQuery.isSuccess,
   });
-  const favoriteCongestionsQuery = useQuery({
-    queryKey: ["congestions", requestedFavoriteIds],
-    queryFn: () => bbangbatApi.getCongestions(requestedFavoriteIds),
-    enabled: requestedFavoriteIds.length > 0,
+  const socialsQuery = useQuery({
+    queryKey: ["member-socials", memberId],
+    queryFn: () => bbangbatApi.getMySocials(accessToken!),
+    enabled: Boolean(accessToken && memberId) && initialTab === "profile",
   });
-
+  const resolvedCurrentSocialProvider = currentSocialProvider
+    && (!socialsQuery.data
+      || socialsQuery.data.some((social) => social.provider === currentSocialProvider))
+    ? currentSocialProvider
+    : socialsQuery.data?.length === 1
+      ? socialsQuery.data[0]?.provider ?? null
+      : null;
+  const withdrawalSocialProvider = resolvedCurrentSocialProvider
+    ?? socialsQuery.data?.[0]?.provider
+    ?? null;
   const deleteMutation = useMutation({
-    mutationFn: (reviewId: number) => bbangbatApi.deleteReview(reviewId, memberId!, accessToken!),
+    mutationFn: (reviewId: number) => bbangbatApi.deleteReview(reviewId, accessToken!),
     onSuccess: async () => {
       notify("빵명록을 삭제했어요.", "success");
       await Promise.all([
@@ -115,33 +159,132 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
     onError: (error) => notify(error instanceof Error ? error.message : "삭제하지 못했어요.", "error"),
   });
 
+  const favoriteMutation = useMutation({
+    mutationFn: (store: Store) => bbangbatApi.removeFavorite(store.id, accessToken!),
+    onMutate: (store) => optimisticallySetFavorite(
+      queryClient,
+      memberId!,
+      store,
+      false,
+      favoriteStoresQuery.data,
+    ),
+    onSuccess: () => notify("나만의 빵지도에서 삭제했어요.", "success"),
+    onError: (error, _store, snapshot) => {
+      rollbackFavoriteCache(queryClient, memberId!, snapshot);
+      notify(
+        error instanceof Error ? error.message : "즐겨찾기를 삭제하지 못했어요.",
+        "error",
+      );
+    },
+    onSettled: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["favorites"] }),
+        queryClient.invalidateQueries({ queryKey: ["favorite-stores"] }),
+        queryClient.invalidateQueries({ queryKey: ["member-stats"] }),
+      ]);
+    },
+  });
+
+  const socialUnlinkMutation = useMutation({
+    mutationFn: (provider: SocialProvider) => bbangbatApi.unlinkSocial(provider, accessToken!),
+    onSuccess: async (_result, provider) => {
+      notify(`${socialProviderCopy[provider].label} 계정 연동을 해제했어요.`, "success");
+      await queryClient.invalidateQueries({ queryKey: ["member-socials", memberId] });
+    },
+    onError: (error, provider) => {
+      if (error instanceof ApiError && error.code === "SOCIAL_REAUTH_REQUIRED") {
+        notify(`${socialProviderCopy[provider].label} 계정으로 다시 인증해 주세요.`, "info");
+        startSocialUnlinkReauthentication(provider);
+        return;
+      }
+      notify(error instanceof Error ? error.message : "소셜 계정 연동을 해제하지 못했어요.", "error");
+    },
+  });
+  const unlinkSocial = socialUnlinkMutation.mutate;
+
   const closeProfileModal = useCallback(() => {
+    if (withdrawalPendingRef.current) return;
     setProfileModal(null);
+    setProfileImageDraft(null);
+    setProfileImagePreviewUrl(null);
     window.requestAnimationFrame(() => modalTriggerRef.current?.focus());
   }, []);
 
-  const nicknameMutation = useMutation({
-    mutationFn: (nickname: string) => bbangbatApi.updateProfile({ nickname }, accessToken!),
+  const requestWithdrawalReauthentication = useCallback(() => {
+    if (!memberId || !withdrawalSocialProvider) {
+      notify("현재 로그인한 소셜 계정을 확인하고 있어요. 잠시 후 다시 시도해 주세요.", "info");
+      return;
+    }
+    sessionStorage.setItem(WITHDRAWAL_REAUTH_MEMBER_KEY, memberId);
+    setProfileModal(null);
+    prepareSocialLogin(WITHDRAWAL_REAUTH_RETURN_TO, withdrawalSocialProvider);
+    window.location.assign(
+      bbangbatApi.socialUnlinkUrl(
+        socialProviderCopy[withdrawalSocialProvider].value,
+        window.location.origin,
+      ),
+    );
+  }, [memberId, notify, prepareSocialLogin, withdrawalSocialProvider]);
+
+  const completeWithdrawal = useCallback(async () => {
+    if (!accessToken || withdrawalPendingRef.current) return;
+    withdrawalPendingRef.current = true;
+    setProfileModal("withdraw");
+    setWithdrawalPending(true);
+    try {
+      await bbangbatApi.withdraw(accessToken);
+      signingOutRef.current = true;
+      setProfileModal(null);
+      await logout();
+      notify("회원 탈퇴가 완료됐어요.", "success");
+      router.replace("/");
+    } catch (error) {
+      if (error instanceof ApiError && error.code === "SOCIAL_REAUTH_REQUIRED") {
+        notify("현재 계정에 연결된 소셜 계정으로 다시 인증해 주세요.", "info");
+        requestWithdrawalReauthentication();
+        return;
+      }
+      notify(
+        error instanceof Error ? error.message : "회원 탈퇴를 처리하지 못했어요.",
+        "error",
+      );
+    } finally {
+      withdrawalPendingRef.current = false;
+      setWithdrawalPending(false);
+    }
+  }, [accessToken, logout, notify, requestWithdrawalReauthentication, router]);
+
+  const profileMutation = useMutation({
+    mutationFn: async ({ nickname, image }: { nickname?: string; image: File | null }) => {
+      const profileImageKey = image
+        ? await bbangbatApi.uploadProfileImage(image, accessToken!)
+        : undefined;
+      return bbangbatApi.updateProfile({ nickname, profileImageKey }, accessToken!);
+    },
     onSuccess: (nextMember) => {
       updateMember(nextMember);
       closeProfileModal();
-      notify("닉네임을 수정했어요.", "success");
+      notify("프로필을 수정했어요.", "success");
     },
-    onError: (error) => notify(error instanceof Error ? error.message : "닉네임을 수정하지 못했어요.", "error"),
+    onError: (error) => notify(error instanceof Error ? error.message : "프로필을 수정하지 못했어요.", "error"),
   });
 
-  const profileImageMutation = useMutation({
-    mutationFn: async (file: File) => {
-      const profileImageKey = await bbangbatApi.uploadProfileImage(file, accessToken!);
-      return bbangbatApi.updateProfile({ profileImageKey }, accessToken!);
-    },
+  const nameMutation = useMutation({
+    mutationFn: (name: string) => bbangbatApi.updateProfile({ name }, accessToken!),
     onSuccess: (nextMember) => {
       updateMember(nextMember);
-      closeProfileModal();
-      notify("프로필 사진을 수정했어요.", "success");
+      setEditingName(false);
+      notify("이름을 수정했어요.", "success");
     },
-    onError: (error) => notify(error instanceof Error ? error.message : "프로필 사진을 수정하지 못했어요.", "error"),
+    onError: (error) => notify(
+      error instanceof Error ? error.message : "이름을 수정하지 못했어요.",
+      "error",
+    ),
   });
+
+  useEffect(() => () => {
+    if (profileImagePreviewUrl) URL.revokeObjectURL(profileImagePreviewUrl);
+  }, [profileImagePreviewUrl]);
 
   useEffect(() => {
     if (!profileModal) return;
@@ -163,9 +306,51 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
     router.replace("/");
   }, [openLogin, router, status]);
 
-  function openProfileModal(nextModal: "nickname" | "avatar-preview" | "avatar-edit", trigger: HTMLElement) {
+  useEffect(() => {
+    if (status !== "authenticated" || !memberId || withdrawalResumeRef.current) return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("withdraw") !== "reauthenticated") return;
+
+    withdrawalResumeRef.current = true;
+    url.searchParams.delete("withdraw");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    const expectedMemberId = sessionStorage.getItem(WITHDRAWAL_REAUTH_MEMBER_KEY);
+    sessionStorage.removeItem(WITHDRAWAL_REAUTH_MEMBER_KEY);
+    if (expectedMemberId !== memberId) {
+      notify("탈퇴를 요청한 계정과 다른 계정으로 로그인했어요. 원래 계정으로 다시 시도해 주세요.", "error");
+      return;
+    }
+
+    queueMicrotask(() => void completeWithdrawal());
+  }, [completeWithdrawal, memberId, notify, status]);
+
+  useEffect(() => {
+    if (status !== "authenticated" || !memberId || socialUnlinkResumeRef.current) return;
+    const url = new URL(window.location.href);
+    const unlinkProvider = url.searchParams.get("unlink")?.toUpperCase();
+    if (!unlinkProvider || !socialProviders.includes(unlinkProvider as SocialProvider)) return;
+
+    socialUnlinkResumeRef.current = true;
+    url.searchParams.delete("unlink");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    const expectedMemberId = sessionStorage.getItem(SOCIAL_UNLINK_MEMBER_KEY);
+    sessionStorage.removeItem(SOCIAL_UNLINK_MEMBER_KEY);
+    if (expectedMemberId !== memberId) {
+      notify("연동 해제를 시작한 계정과 현재 로그인 계정이 달라 요청을 중단했어요.", "error");
+      return;
+    }
+
+    queueMicrotask(() => unlinkSocial(unlinkProvider as SocialProvider));
+  }, [memberId, notify, status, unlinkSocial]);
+
+  function openProfileModal(
+    nextModal: "profile" | "avatar-preview" | "withdraw",
+    trigger: HTMLElement,
+  ) {
     modalTriggerRef.current = trigger;
     setNicknameDraft(member?.nickname ?? "");
+    setProfileImageDraft(null);
+    setProfileImagePreviewUrl(null);
     setProfileModal(nextModal);
   }
 
@@ -174,16 +359,50 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
     void logout().then(() => router.replace("/"));
   }
 
-  function saveNickname() {
+  function startSocialLink(provider: SocialProvider) {
+    if (!memberId || !socialsQuery.isSuccess) {
+      notify("연동된 소셜 정보를 확인한 뒤 다시 시도해 주세요.", "info");
+      return;
+    }
+    sessionStorage.setItem(SOCIAL_LINK_MEMBER_KEY, memberId);
+    window.location.assign(
+      bbangbatApi.socialLinkUrl(socialProviderCopy[provider].value, window.location.origin),
+    );
+  }
+
+  function startSocialUnlinkReauthentication(provider: SocialProvider) {
+    if (!memberId) return;
+    sessionStorage.setItem(SOCIAL_UNLINK_MEMBER_KEY, memberId);
+    prepareSocialLogin(`/mypage?tab=profile&unlink=${provider}`, provider);
+    window.location.assign(
+      bbangbatApi.socialUnlinkUrl(socialProviderCopy[provider].value, window.location.origin),
+    );
+  }
+
+  function toggleSocial(provider: SocialProvider, linked: boolean) {
+    if (linked) {
+      socialUnlinkMutation.mutate(provider);
+      return;
+    }
+    startSocialLink(provider);
+  }
+
+  function saveProfile() {
     if (!featureFlags.memberProfileEditing) {
-      notify("닉네임 수정 기능은 준비 중이에요.", "info");
+      notify("프로필 수정 기능은 준비 중이에요.", "info");
       return;
     }
-    if (!isValidNickname(nicknameDraft)) {
-      notify("닉네임은 2자 이상 20자 이하로 입력해 주세요.", "error");
+    const nickname = nicknameDraft;
+    if (!isValidNickname(nickname)) {
+      notify("닉네임은 한글, 영문, 숫자만 2~10자로 입력해 주세요.", "error");
       return;
     }
-    nicknameMutation.mutate(nicknameDraft.trim());
+    const nextNickname = nickname === member?.nickname ? undefined : nickname;
+    if (!nextNickname && !profileImageDraft) {
+      notify("변경된 프로필 정보가 없어요.", "info");
+      return;
+    }
+    profileMutation.mutate({ nickname: nextNickname, image: profileImageDraft });
   }
 
   function selectProfileImage(fileList: FileList | null) {
@@ -197,7 +416,16 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
       notify("JPG, PNG, WebP 이미지만 선택할 수 있어요.", "error");
       return;
     }
-    profileImageMutation.mutate(file);
+    setProfileImageDraft(file);
+    setProfileImagePreviewUrl(URL.createObjectURL(file));
+  }
+
+  function openProfileImagePicker() {
+    if (!featureFlags.memberProfileEditing) {
+      notify("프로필 사진 수정 기능은 준비 중이에요.", "info");
+      return;
+    }
+    profileImageInputRef.current?.click();
   }
 
   function startEditingName() {
@@ -214,11 +442,15 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
       notify("이름 수정 기능은 준비 중이에요.", "info");
       return;
     }
-    if (!nameDraft.trim()) {
-      notify("이름을 입력해 주세요.", "error");
+    if (!isValidName(nameDraft)) {
+      notify("이름은 1~30자로 입력해 주세요.", "error");
       return;
     }
-    notify("이름 수정 기능은 준비 중이에요.", "info");
+    if (nameDraft === member?.name) {
+      setEditingName(false);
+      return;
+    }
+    nameMutation.mutate(nameDraft);
   }
 
   if (status === "initializing") {
@@ -236,12 +468,9 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
 
   const stats = statsQuery.data;
   const recentReviews = (reviewsQuery.data ?? []).slice(0, 3);
-  const congestionByStore = new Map(
-    (favoriteCongestionsQuery.data ?? []).map((congestion) => [congestion.storeId, congestion]),
-  );
 
   return (
-    <main className="mypage-dashboard">
+    <main className="mypage-dashboard" data-tab={initialTab}>
       <div className="mypage-dashboard-shell">
         <div className="mypage-sidebar-column">
           <MypageMapLink />
@@ -256,34 +485,14 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
                 >
                   <MemberAvatar imageUrl={member?.profileImageUrl} className="mypage-sidebar-avatar" />
                 </button>
-                <button
-                  type="button"
-                  className="mypage-avatar-edit"
-                  onClick={(event) => {
-                    if (!featureFlags.memberProfileEditing) {
-                      notify("프로필 사진 수정 기능은 준비 중이에요.", "info");
-                      return;
-                    }
-                    openProfileModal("avatar-edit", event.currentTarget);
-                  }}
-                  aria-label="프로필 사진 수정"
-                >
-                  <Pencil aria-hidden="true" size={10} strokeWidth={2.4} />
-                </button>
               </div>
               <div className="mypage-sidebar-profile-copy">
                 <strong>{member?.nickname}</strong>
                 <button
                   type="button"
-                  onClick={(event) => {
-                    if (!featureFlags.memberProfileEditing) {
-                      notify("닉네임 수정 기능은 준비 중이에요.", "info");
-                      return;
-                    }
-                    openProfileModal("nickname", event.currentTarget);
-                  }}
+                  onClick={(event) => openProfileModal("profile", event.currentTarget)}
                 >
-                  닉네임 수정
+                  프로필 수정
                 </button>
               </div>
             </div>
@@ -361,10 +570,13 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
                   {favoriteIdsQuery.isLoading || favoriteStoresQuery.isLoading ? <LoadingState label="나만의 빵지도를 불러오는 중" /> : null}
                   {!favoriteIdsQuery.isLoading && !favoriteStoresQuery.isLoading && (favoriteIdsQuery.isError || favoriteStoresQuery.isError || favoriteStoresQuery.data?.length === 0) ? <p className="mypage-overview-empty">아직 저장한 빵집이 없어요.</p> : null}
                   <div className="mypage-overview-list">
-                    {favoriteStoresQuery.data?.slice(0, 3).map((store) => {
-                      const congestion = congestionByStore.get(store.id);
-                      return (
-                        <button type="button" key={store.id} className="mypage-favorite-preview" onClick={() => router.push(`/?storeId=${store.id}`)}>
+                    {favoriteStoresQuery.data?.slice(0, 3).map((store) => (
+                        <article key={store.id} className="mypage-favorite-preview">
+                          <button
+                            type="button"
+                            className="mypage-favorite-preview-select"
+                            onClick={() => router.push(`/?storeId=${store.id}&detail=sidebar`)}
+                          >
                           <div
                             className="mypage-preview-thumbnail"
                             style={hasStoreImage(store.imageUrl) ? { backgroundImage: `url(${store.imageUrl})` } : undefined}
@@ -373,15 +585,20 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
                           <div className="mypage-favorite-preview-copy">
                             <strong>{store.name}</strong>
                             <p>{compactAddress(store.address)}</p>
-                            {congestion ? (
-                              <span className={`mypage-preview-congestion congestion-${congestion.current.toLowerCase()}`}>
-                                <i aria-hidden="true" /> {congestionCopy[congestion.current].shortLabel}
-                              </span>
-                            ) : <span className="mypage-preview-congestion-loading">혼잡도 확인 중</span>}
                           </div>
-                        </button>
-                      );
-                    })}
+                          </button>
+                          <button
+                            type="button"
+                            className="mypage-favorite-remove"
+                            aria-label={`${store.name} 즐겨찾기 해제`}
+                            aria-pressed="true"
+                            disabled={favoriteMutation.isPending && favoriteMutation.variables?.id === store.id}
+                            onClick={() => favoriteMutation.mutate(store)}
+                          >
+                            <Heart aria-hidden="true" size={17} fill="currentColor" />
+                          </button>
+                        </article>
+                    ))}
                   </div>
                 </section>
               </div>
@@ -425,10 +642,11 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
                   <StoreCard
                     key={store.id}
                     dense
-                    showCongestion
                     store={store}
-                    congestion={congestionByStore.get(store.id)}
-                    onSelect={(storeId) => router.push(`/?storeId=${storeId}`)}
+                    onSelect={(storeId) => router.push(`/?storeId=${storeId}&detail=sidebar`)}
+                    isFavorite
+                    favoritePending={favoriteMutation.isPending && favoriteMutation.variables?.id === store.id}
+                    onToggleFavorite={() => favoriteMutation.mutate(store)}
                   />
                 ))}
               </div>
@@ -448,12 +666,20 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
                       <input
                         autoFocus
                         value={nameDraft}
-                        maxLength={30}
-                        onChange={(event) => setNameDraft(limitTextInput(event.target.value, 30))}
+                        maxLength={NAME_MAX_LENGTH}
+                        onChange={(event) => setNameDraft(limitTextInput(event.target.value, NAME_MAX_LENGTH))}
                         aria-label="이름"
                       />
-                      <button type="button" onClick={() => setEditingName(false)}>취소</button>
-                      <button type="button" onClick={saveName}>저장</button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingName(false)}
+                        disabled={nameMutation.isPending}
+                      >
+                        취소
+                      </button>
+                      <button type="button" onClick={saveName} disabled={nameMutation.isPending}>
+                        {nameMutation.isPending ? "저장 중…" : "저장"}
+                      </button>
                     </div>
                   ) : (
                     <div className="mypage-account-value">
@@ -466,17 +692,83 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
               </div>
               <section className="mypage-account-section" aria-labelledby="mypage-social-title">
                 <h3 id="mypage-social-title">소셜 연동</h3>
-                <div className="mypage-social-row"><span><i data-provider="kakao" aria-hidden="true">K</i>카카오</span><button type="button" role="switch" aria-checked="false" aria-label="카카오 계정 연동" onClick={() => notify("소셜 계정 연동 기능은 준비 중이에요.", "info")}><i /></button></div>
-                <div className="mypage-social-row"><span><i data-provider="naver" aria-hidden="true">N</i>네이버</span><button type="button" role="switch" aria-checked="false" aria-label="네이버 계정 연동" onClick={() => notify("소셜 계정 연동 기능은 준비 중이에요.", "info")}><i /></button></div>
+                {socialProviders.map((provider) => {
+                  const copy = socialProviderCopy[provider];
+                  const linked = socialsQuery.data?.some((social) => social.provider === provider) ?? false;
+                  const current = linked && provider === resolvedCurrentSocialProvider;
+                  const pending = socialUnlinkMutation.isPending
+                    && socialUnlinkMutation.variables === provider;
+                  return (
+                    <div className="mypage-social-row" key={provider}>
+                      <span>
+                        <i data-provider={copy.value} aria-hidden="true">{copy.symbol}</i>
+                        {copy.label}
+                        {current ? <em className="mypage-current-social">현재 로그인</em> : null}
+                      </span>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={linked}
+                        aria-label={`${copy.label} 계정 ${linked ? "연동 해제" : "연동"}`}
+                        disabled={!socialsQuery.isSuccess || pending}
+                        onClick={() => toggleSocial(provider, linked)}
+                      >
+                        <i />
+                      </button>
+                    </div>
+                  );
+                })}
+                {socialsQuery.isLoading ? <p className="mypage-social-state">연동 정보를 확인하는 중…</p> : null}
+                {socialsQuery.isError ? <p className="mypage-social-state">연동 정보를 불러오지 못했어요.</p> : null}
               </section>
               <section className="mypage-account-section mypage-withdrawal" aria-labelledby="mypage-withdrawal-title">
                 <h3 id="mypage-withdrawal-title">회원 탈퇴</h3>
-                <button type="button" onClick={() => notify("회원 탈퇴 기능은 준비 중이에요.", "info")}>탈퇴하기</button>
+                <button
+                  type="button"
+                  onClick={(event) => openProfileModal("withdraw", event.currentTarget)}
+                >
+                  탈퇴하기
+                </button>
               </section>
             </section>
           ) : null}
         </section>
       </div>
+
+      <footer className="mypage-footer">
+        <span>© 2026 빵밭. All rights reserved.</span>
+        <span className="mypage-footer-links">
+          <Link href="/privacy">개인정보처리방침</Link>
+          <i aria-hidden="true">|</i>
+          <Link href="/terms">서비스 이용약관</Link>
+        </span>
+      </footer>
+
+      <nav className="mypage-mobile-nav" aria-label="마이페이지 메뉴">
+        {activityNavigation.map(({ tab, label, href, Icon }) => (
+          <Link
+            key={tab}
+            href={href}
+            data-active={initialTab === tab}
+            aria-current={initialTab === tab ? "page" : undefined}
+          >
+            <Icon aria-hidden="true" size={18} />
+            <span>{label}</span>
+          </Link>
+        ))}
+        <Link
+          href="/mypage?tab=profile"
+          data-active={initialTab === "profile"}
+          aria-current={initialTab === "profile" ? "page" : undefined}
+        >
+          <Settings aria-hidden="true" size={18} />
+          <span>계정 정보</span>
+        </Link>
+        <button type="button" onClick={signOut} aria-label="로그아웃">
+          <LogOut aria-hidden="true" size={18} />
+          <span>로그아웃</span>
+        </button>
+      </nav>
 
       {profileModal ? (
         <div
@@ -486,36 +778,35 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
             if (event.target === event.currentTarget) closeProfileModal();
           }}
         >
-          <section className="profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-modal-title">
-            <button type="button" className="profile-modal-close" onClick={closeProfileModal} aria-label="닫기" autoFocus={profileModal !== "nickname"}>
-              <X aria-hidden="true" size={19} />
-            </button>
-            {profileModal === "nickname" ? (
+          <section
+            className="profile-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="profile-modal-title"
+            data-kind={profileModal}
+          >
+            {profileModal !== "withdraw" ? (
+              <button type="button" className="profile-modal-close" onClick={closeProfileModal} aria-label="닫기" autoFocus>
+                <X aria-hidden="true" size={19} />
+              </button>
+            ) : null}
+            {profileModal === "profile" ? (
               <>
-                <h2 id="profile-modal-title">닉네임 수정</h2>
-                <label className="profile-nickname-field">
-                  <span>닉네임</span>
-                  <input autoFocus value={nicknameDraft} onChange={(event) => setNicknameDraft(limitTextInput(event.target.value, 20))} minLength={2} maxLength={20} />
-                  <small>{Array.from(nicknameDraft).length}/20</small>
-                </label>
-                <div className="profile-modal-actions">
-                  <button type="button" className="button button-secondary" onClick={closeProfileModal}>취소</button>
-                  <button type="button" className="button button-primary" disabled={nicknameMutation.isPending} onClick={saveNickname}>
-                    {nicknameMutation.isPending ? "저장 중…" : "저장"}
+                <h2 id="profile-modal-title">프로필 수정</h2>
+                <div className="profile-edit-photo">
+                  <button
+                    type="button"
+                    className="profile-edit-photo-preview"
+                    onClick={openProfileImagePicker}
+                    disabled={profileMutation.isPending}
+                    aria-label="프로필 사진 변경"
+                  >
+                    <MemberAvatar imageUrl={profileImagePreviewUrl ?? member?.profileImageUrl} className="profile-avatar-edit-preview" />
+                    <span className="profile-edit-photo-action" aria-hidden="true">
+                      <Pencil size={14} strokeWidth={2.4} />
+                    </span>
                   </button>
                 </div>
-              </>
-            ) : null}
-            {profileModal === "avatar-preview" ? (
-              <>
-                <h2 id="profile-modal-title">프로필 사진</h2>
-                <MemberAvatar imageUrl={member?.profileImageUrl} className="profile-avatar-preview" />
-              </>
-            ) : null}
-            {profileModal === "avatar-edit" ? (
-              <>
-                <h2 id="profile-modal-title">프로필 사진 수정</h2>
-                <MemberAvatar imageUrl={member?.profileImageUrl} className="profile-avatar-edit-preview" />
                 <input
                   ref={profileImageInputRef}
                   type="file"
@@ -526,20 +817,58 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
                     event.target.value = "";
                   }}
                 />
-                <button
-                  type="button"
-                  className="button button-secondary profile-photo-select"
-                  disabled={profileImageMutation.isPending}
-                  onClick={() => {
-                    if (!featureFlags.memberProfileEditing) {
-                      notify("프로필 사진 수정 기능은 준비 중이에요.", "info");
-                      return;
-                    }
-                    profileImageInputRef.current?.click();
-                  }}
-                >
-                  {profileImageMutation.isPending ? "업로드 중…" : "사진 선택"}
-                </button>
+                <label className="profile-nickname-field">
+                  <span>닉네임</span>
+                  <input
+                    value={nicknameDraft}
+                    onChange={(event) => setNicknameDraft(limitTextInput(event.target.value, NICKNAME_MAX_LENGTH))}
+                    minLength={2}
+                    maxLength={NICKNAME_MAX_LENGTH}
+                    pattern="[가-힣A-Za-z0-9]{2,10}"
+                    title="한글, 영문, 숫자만 2~10자로 입력해 주세요."
+                  />
+                  <small>{Array.from(nicknameDraft).length}/{NICKNAME_MAX_LENGTH}</small>
+                </label>
+                <div className="profile-modal-actions">
+                  <button type="button" className="button button-secondary" onClick={closeProfileModal}>취소</button>
+                  <button type="button" className="button button-primary" disabled={profileMutation.isPending} onClick={saveProfile}>
+                    {profileMutation.isPending ? "저장 중…" : "저장"}
+                  </button>
+                </div>
+              </>
+            ) : null}
+            {profileModal === "avatar-preview" ? (
+              <>
+                <h2 id="profile-modal-title">프로필 사진</h2>
+                <MemberAvatar imageUrl={member?.profileImageUrl} className="profile-avatar-preview" />
+              </>
+            ) : null}
+            {profileModal === "withdraw" ? (
+              <>
+                <h2 id="profile-modal-title">정말 빵밭을 떠나시겠어요?</h2>
+                <div className="profile-withdraw-copy">
+                  <p>회원 정보, 소셜 연동, 나만의 빵지도와 혼잡도 투표는 삭제되며 복구할 수 없어요.</p>
+                  <p>작성한 빵명록과 실시간 톡은 삭제되지 않고 서비스 기록으로 남아요.</p>
+                </div>
+                <div className="profile-modal-actions">
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={closeProfileModal}
+                    disabled={withdrawalPending}
+                    autoFocus
+                  >
+                    계속 이용하기
+                  </button>
+                  <button
+                    type="button"
+                    className="button profile-withdraw-confirm"
+                    onClick={requestWithdrawalReauthentication}
+                    disabled={withdrawalPending}
+                  >
+                    {withdrawalPending ? "탈퇴 처리 중…" : "탈퇴하기"}
+                  </button>
+                </div>
               </>
             ) : null}
           </section>

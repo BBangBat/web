@@ -15,7 +15,9 @@ vi.mock("@/shared/api/bbangbat-api", () => ({ bbangbatApi: apiMocks }));
 
 function LoginProbe() {
   const { openLogin } = useLoginModal();
-  return <button type="button" onClick={() => openLogin("/favorites")}>로그인 열기</button>;
+  return (
+    <button type="button" onClick={() => openLogin("/favorites")}>로그인 열기</button>
+  );
 }
 
 describe("LoginModalProvider", () => {
@@ -46,6 +48,7 @@ describe("LoginModalProvider", () => {
     kakaoLink.addEventListener("click", (event) => event.preventDefault(), { once: true });
     fireEvent.click(kakaoLink);
     expect(sessionStorage.getItem("bbangbat.return-to")).toBe("/favorites");
+    expect(sessionStorage.getItem("bbangbat.pending-social-provider")).toBe("KAKAO");
     expect(sessionStorage.getItem("bbangbat.explicit-logout")).toBeNull();
   });
 });

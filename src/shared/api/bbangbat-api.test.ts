@@ -53,7 +53,7 @@ describe("bbangbatApi profile", () => {
     expect(uploadRequest.body).toBe(file);
   });
 
-  it("PATCH /me에는 URL이 아닌 profileImageKey를 전달한다", async () => {
+  it("PATCH /me에는 이름과 URL이 아닌 profileImageKey를 전달한다", async () => {
     const member = {
       id: 7,
       email: "bread@example.com",
@@ -71,13 +71,110 @@ describe("bbangbatApi profile", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
-      bbangbatApi.updateProfile({ profileImageKey: "members/profile-key" }, "access-token"),
+      bbangbatApi.updateProfile({ name: "홍길동", profileImageKey: "members/profile-key" }, "access-token"),
     ).resolves.toEqual(member);
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/members/me");
     const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
     expect(request.method).toBe("PATCH");
-    expect(JSON.parse(String(request.body))).toEqual({ profileImageKey: "members/profile-key" });
+    expect(JSON.parse(String(request.body))).toEqual({
+      name: "홍길동",
+      profileImageKey: "members/profile-key",
+    });
+  });
+
+  it("S3 PUT에는 브라우저 인증 정보를 전송하지 않는다", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        presignedUrl: "https://uploads.example.com/profile",
+        objectKey: "members/profile-key",
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await bbangbatApi.uploadProfileImage(
+      new File(["profile-image"], "profile.webp", { type: "image/webp" }),
+      "access-token",
+    );
+
+    expect((fetchMock.mock.calls[1]?.[1] as RequestInit).credentials).toBe("omit");
+  });
+});
+
+describe("bbangbatApi auth", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("저장된 액세스 토큰의 회원 조회는 내부에서 토큰을 몰래 교체하지 않는다", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(bbangbatApi.getMe("expired-access-token"))
+      .rejects.toMatchObject({ status: 401 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/members/me");
+  });
+
+  it("인증 회원 API에 클라이언트 memberId를 쿼리로 전달하지 않는다", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify([2, 1]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ reviewCount: 0 }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await bbangbatApi.getFavorites("access-token");
+    await bbangbatApi.getMyReviews("access-token");
+    await bbangbatApi.getMemberStats("access-token");
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "/api/members/favorites",
+      "/api/reviews/me",
+      "/api/members/me/stats",
+    ]);
+  });
+
+  it("회원 탈퇴는 인증된 내 정보 API에 DELETE로 요청한다", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(bbangbatApi.withdraw("access-token")).resolves.toBeUndefined();
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/members/me");
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(request.method).toBe("DELETE");
+    expect(new Headers(request.headers).get("Authorization")).toBe("Bearer access-token");
+  });
+
+  it("연동 소셜 조회·추가·해제를 인증된 내 계정 경로로 요청한다", async () => {
+    const socials = [{ provider: "NAVER" }];
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(socials), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(socials), { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(bbangbatApi.getMySocials("access-token")).resolves.toEqual(socials);
+    await expect(bbangbatApi.linkSocial("temporary-token", "access-token")).resolves.toEqual(socials);
+    await expect(bbangbatApi.unlinkSocial("NAVER", "access-token")).resolves.toBeUndefined();
+
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "/api/members/me/socials",
+      "/api/members/me/socials",
+      "/api/members/social/NAVER",
+    ]);
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({
+      tempToken: "temporary-token",
+    });
+  });
+
+  it("소셜 연동과 재인증 URL의 purpose를 구분한다", () => {
+    expect(bbangbatApi.socialLinkUrl("kakao", "https://dev.bbangbat.com")).toContain(
+      "purpose=link&redirect_uri=https%3A%2F%2Fdev.bbangbat.com",
+    );
+    expect(bbangbatApi.socialUnlinkUrl("naver", "http://localhost:3000")).toContain(
+      "purpose=unlink&redirect_uri=http%3A%2F%2Flocalhost%3A3000",
+    );
   });
 });
 

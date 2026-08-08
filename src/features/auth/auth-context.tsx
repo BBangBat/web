@@ -10,19 +10,25 @@ import {
   type ReactNode,
 } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { Member } from "@/entities/types";
+import type { Member, SocialProvider } from "@/entities/types";
 import { bbangbatApi } from "@/shared/api/bbangbat-api";
 import { ApiError } from "@/shared/api/client";
 import {
   getAccessTokenExpiresAt,
   getMemberIdFromAccessToken,
 } from "@/shared/lib/auth-token";
+import {
+  ACCESS_TOKEN_REFRESHED_EVENT,
+  AUTH_SESSION_EXPIRED_EVENT,
+} from "@/shared/lib/auth-events";
 import { isSafeInternalPath } from "@/shared/lib/format";
 
 const ACCESS_TOKEN_KEY = "bbangbat.access-token";
 const MEMBER_SESSION_KEY = "bbangbat.member-session";
 const RETURN_TO_KEY = "bbangbat.return-to";
 const EXPLICIT_LOGOUT_KEY = "bbangbat.explicit-logout";
+const CURRENT_SOCIAL_PROVIDER_KEY = "bbangbat.current-social-provider";
+const PENDING_SOCIAL_PROVIDER_KEY = "bbangbat.pending-social-provider";
 const REFRESH_EARLY_MS = 2 * 60 * 1_000;
 const REFRESH_RETRY_MS = 60 * 1_000;
 const FALLBACK_REFRESH_MS = 25 * 60 * 1_000;
@@ -34,10 +40,12 @@ type AuthContextValue = {
   accessToken: string | null;
   memberId: string | null;
   member: Member | null;
+  currentSocialProvider: SocialProvider | null;
   status: AuthStatus;
   updateMember: (member: Member) => void;
   acceptAccessToken: (accessToken: string) => Promise<void>;
-  prepareSocialLogin: (returnTo?: string) => void;
+  prepareSocialLogin: (returnTo?: string, provider?: SocialProvider) => void;
+  cancelSocialLogin: () => void;
   consumeReturnTo: () => string;
   logout: () => Promise<void>;
 };
@@ -79,6 +87,19 @@ function clearMemberSession() {
   sessionStorage.removeItem(MEMBER_SESSION_KEY);
 }
 
+function readSocialProvider(key: string): SocialProvider | null {
+  const provider = sessionStorage.getItem(key);
+  return provider === "NAVER" || provider === "KAKAO" ? provider : null;
+}
+
+function storeCurrentSocialProvider(provider: SocialProvider | null) {
+  if (provider) {
+    sessionStorage.setItem(CURRENT_SOCIAL_PROVIDER_KEY, provider);
+  } else {
+    sessionStorage.removeItem(CURRENT_SOCIAL_PROVIDER_KEY);
+  }
+}
+
 function setExplicitLogout(loggedOut: boolean) {
   if (loggedOut) {
     sessionStorage.setItem(EXPLICIT_LOGOUT_KEY, "true");
@@ -91,18 +112,21 @@ function isExplicitlyLoggedOut() {
   return sessionStorage.getItem(EXPLICIT_LOGOUT_KEY) === "true";
 }
 
-function isAuthHandoffPath(pathname: string) {
-  return pathname === "/oauth2/callback" || pathname === "/signup";
+function isAuthHandoffPath(pathname: string, search: string) {
+  if (pathname === "/signup") return true;
+  return pathname === "/oauth2/callback"
+    && new URLSearchParams(search).has("access_token");
 }
 
 function isAuthenticationFailure(error: unknown) {
-  return error instanceof ApiError && (error.status === 401 || error.status === 403);
+  return error instanceof ApiError && error.status === 401;
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [member, setMember] = useState<Member | null>(null);
+  const [currentSocialProvider, setCurrentSocialProvider] = useState<SocialProvider | null>(null);
   const [status, setStatus] = useState<AuthStatus>("initializing");
   const memberId = useMemo(
     () => (accessToken ? getMemberIdFromAccessToken(accessToken) : null),
@@ -118,7 +142,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const establishSession = useCallback(async (token: string) => {
     const nextMemberId = getMemberIdFromAccessToken(token);
     if (!nextMemberId) throw new Error("로그인 토큰에서 회원 정보를 확인하지 못했어요.");
-    const nextMember = await bbangbatApi.getMe(nextMemberId, token);
+    const nextMember = await bbangbatApi.getMe(token);
     setExplicitLogout(false);
     storeAccessToken(token);
     storeMemberSession(nextMemberId, nextMember);
@@ -132,6 +156,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clearMemberSession();
     setAccessToken(null);
     setMember(null);
+    storeCurrentSocialProvider(null);
+    sessionStorage.removeItem(PENDING_SOCIAL_PROVIDER_KEY);
+    setCurrentSocialProvider(null);
     setStatus("anonymous");
   }, []);
 
@@ -139,7 +166,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let active = true;
 
     async function restoreSession() {
-      if (isAuthHandoffPath(window.location.pathname)) {
+      if (isAuthHandoffPath(window.location.pathname, window.location.search)) {
         if (active) setStatus("anonymous");
         return;
       }
@@ -147,23 +174,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (isExplicitlyLoggedOut()) {
         storeAccessToken(null);
         clearMemberSession();
-        if (active) setStatus("anonymous");
+        storeCurrentSocialProvider(null);
+        sessionStorage.removeItem(PENDING_SOCIAL_PROVIDER_KEY);
+        if (active) {
+          setCurrentSocialProvider(null);
+          setStatus("anonymous");
+        }
         return;
       }
 
       const storedToken = sessionStorage.getItem(ACCESS_TOKEN_KEY);
+      const storedSocialProvider = readSocialProvider(CURRENT_SOCIAL_PROVIDER_KEY);
       const storedMemberId = storedToken ? getMemberIdFromAccessToken(storedToken) : null;
       const cachedMember = storedMemberId ? readMemberSession(storedMemberId) : null;
       let recoverableToken = storedToken;
-      let refreshSucceeded = false;
 
       if (storedToken && storedMemberId) {
         try {
-          const storedMember = await bbangbatApi.getMe(storedMemberId, storedToken);
+          const storedMember = await bbangbatApi.getMe(storedToken);
           if (!active || isExplicitlyLoggedOut()) return;
           storeMemberSession(storedMemberId, storedMember);
           setAccessToken(storedToken);
           setMember(storedMember);
+          setCurrentSocialProvider(storedSocialProvider);
           setStatus("authenticated");
           return;
         } catch {
@@ -173,16 +206,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       try {
         const refreshed = await bbangbatApi.refreshToken();
-        refreshSucceeded = true;
         recoverableToken = refreshed.accessToken;
         const refreshedMemberId = getMemberIdFromAccessToken(refreshed.accessToken);
         if (!refreshedMemberId) throw new Error("갱신된 토큰에 회원 정보가 없어요.");
-        const refreshedMember = await bbangbatApi.getMe(refreshedMemberId, refreshed.accessToken);
+        const refreshedMember = await bbangbatApi.getMe(refreshed.accessToken);
         if (!active || isExplicitlyLoggedOut()) return;
         storeAccessToken(refreshed.accessToken);
         storeMemberSession(refreshedMemberId, refreshedMember);
         setAccessToken(refreshed.accessToken);
         setMember(refreshedMember);
+        setCurrentSocialProvider(storedSocialProvider);
         setStatus("authenticated");
       } catch (error) {
         if (!active) return;
@@ -192,11 +225,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (
           recoverableToken
           && recoverableMemberId
-          && (refreshSucceeded || !isAuthenticationFailure(error))
+          && !isAuthenticationFailure(error)
         ) {
           storeAccessToken(recoverableToken);
           setAccessToken(recoverableToken);
           setMember(cachedMember);
+          setCurrentSocialProvider(storedSocialProvider);
           setStatus("authenticated");
           return;
         }
@@ -211,6 +245,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [clearSession]);
 
   useEffect(() => {
+    const acceptRefreshedToken = (event: Event) => {
+      const nextAccessToken = (event as CustomEvent<{ accessToken?: unknown }>).detail?.accessToken;
+      if (typeof nextAccessToken !== "string") return;
+      const nextMemberId = getMemberIdFromAccessToken(nextAccessToken);
+      if (!nextMemberId) return;
+
+      setExplicitLogout(false);
+      storeAccessToken(nextAccessToken);
+      setAccessToken(nextAccessToken);
+      setMember((currentMember) => {
+        if (currentMember && String(currentMember.id) === nextMemberId) {
+          storeMemberSession(nextMemberId, currentMember);
+          return currentMember;
+        }
+        clearMemberSession();
+        return null;
+      });
+      setStatus("authenticated");
+    };
+    const expireSession = () => {
+      clearSession();
+      queryClient.clear();
+    };
+
+    window.addEventListener(ACCESS_TOKEN_REFRESHED_EVENT, acceptRefreshedToken);
+    window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, expireSession);
+    return () => {
+      window.removeEventListener(ACCESS_TOKEN_REFRESHED_EVENT, acceptRefreshedToken);
+      window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, expireSession);
+    };
+  }, [clearSession, queryClient]);
+
+  useEffect(() => {
     if (status !== "authenticated" || !accessToken || !memberId || member) return;
 
     let active = true;
@@ -223,7 +290,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const recoverMember = async () => {
       try {
-        const recoveredMember = await bbangbatApi.getMe(memberId, accessToken);
+        const recoveredMember = await bbangbatApi.getMe(accessToken);
         if (!active || isExplicitlyLoggedOut()) return;
         storeMemberSession(memberId, recoveredMember);
         setMember(recoveredMember);
@@ -290,8 +357,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       try {
         await establishSession(refreshedToken);
-      } catch {
-        if (active && !isExplicitlyLoggedOut()) schedule(REFRESH_RETRY_MS);
+      } catch (error) {
+        if (!active || isExplicitlyLoggedOut()) return;
+        if (isAuthenticationFailure(error)) clearSession();
+        else schedule(REFRESH_RETRY_MS);
       } finally {
         refreshing = false;
       }
@@ -325,15 +394,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const acceptAccessToken = useCallback(
     async (token: string) => {
       await establishSession(token);
+      const pendingProvider = readSocialProvider(PENDING_SOCIAL_PROVIDER_KEY);
+      sessionStorage.removeItem(PENDING_SOCIAL_PROVIDER_KEY);
+      if (pendingProvider) {
+        storeCurrentSocialProvider(pendingProvider);
+        setCurrentSocialProvider(pendingProvider);
+      }
       await queryClient.invalidateQueries();
     },
     [establishSession, queryClient],
   );
 
-  const prepareSocialLogin = useCallback((returnTo = "/") => {
+  const prepareSocialLogin = useCallback((returnTo = "/", provider?: SocialProvider) => {
     const safeReturnTo = isSafeInternalPath(returnTo) ? returnTo : "/";
     setExplicitLogout(false);
     sessionStorage.setItem(RETURN_TO_KEY, safeReturnTo);
+    if (provider) sessionStorage.setItem(PENDING_SOCIAL_PROVIDER_KEY, provider);
+  }, []);
+
+  const cancelSocialLogin = useCallback(() => {
+    sessionStorage.removeItem(PENDING_SOCIAL_PROVIDER_KEY);
+    sessionStorage.removeItem(RETURN_TO_KEY);
   }, []);
 
   const consumeReturnTo = useCallback(() => {
@@ -359,10 +440,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       accessToken,
       memberId,
       member,
+      currentSocialProvider,
       status,
       updateMember,
       acceptAccessToken,
       prepareSocialLogin,
+      cancelSocialLogin,
       consumeReturnTo,
       logout,
     }),
@@ -370,10 +453,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       accessToken,
       memberId,
       member,
+      currentSocialProvider,
       status,
       updateMember,
       acceptAccessToken,
       prepareSocialLogin,
+      cancelSocialLogin,
       consumeReturnTo,
       logout,
     ],
