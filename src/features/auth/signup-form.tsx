@@ -160,7 +160,6 @@ export function SignupForm({
   if (existingAccount) {
     return (
       <main className="signup-page">
-        <SignupMapLink />
         <section className="account-link-card">
           <CircleCheck aria-hidden="true" size={42} />
           <p className="eyebrow">WELCOME BACK</p>
@@ -182,7 +181,6 @@ export function SignupForm({
   if (signupStep === "account-check") {
     return (
       <main className="signup-page">
-        <SignupMapLink />
         <section className="account-link-card account-check-card">
           <p className="eyebrow">CHECK YOUR ACCOUNT</p>
           <h1>다른 소셜 계정으로<br />가입하신 적이 있나요?</h1>
