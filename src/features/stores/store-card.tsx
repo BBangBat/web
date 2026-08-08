@@ -16,6 +16,7 @@ type StoreCardProps = {
   summary?: TalkSummary;
   compact?: boolean;
   dense?: boolean;
+  showCongestion?: boolean;
   selected?: boolean;
   onSelect?: (storeId: number) => void;
   isFavorite?: boolean;
@@ -30,6 +31,7 @@ export function StoreCard({
   summary,
   compact = false,
   dense = false,
+  showCongestion = false,
   selected = false,
   onSelect,
   isFavorite = false,
@@ -84,6 +86,14 @@ export function StoreCard({
           >
             <Heart aria-hidden="true" size={18} fill={isFavorite ? "currentColor" : "none"} />
           </button>
+        ) : null}
+        {showCongestion ? (
+          congestion ? (
+            <span className={`store-card-dense-congestion congestion-${congestion.current.toLowerCase()}`}>
+              <i aria-hidden="true" />
+              {congestionCopy[congestion.current].shortLabel}
+            </span>
+          ) : <span className="store-card-dense-congestion-loading">확인 중</span>
         ) : null}
       </div>
     );

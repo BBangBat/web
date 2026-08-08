@@ -1,12 +1,16 @@
 const DEFAULT_DEVELOPMENT_API_URL = "https://dev-api.bbangbat.com";
+const PRODUCTION_API_URL = "https://api.bbangbat.com";
 
 function normalizeBaseUrl(value: string): string {
   return value.replace(/\/+$/, "");
 }
 
+const apiBaseUrl = normalizeBaseUrl(
+  process.env.NEXT_PUBLIC_API_BASE_URL || DEFAULT_DEVELOPMENT_API_URL,
+);
+
 export const env = {
-  oauthBaseUrl: normalizeBaseUrl(
-    process.env.NEXT_PUBLIC_API_BASE_URL || DEFAULT_DEVELOPMENT_API_URL,
-  ),
+  oauthBaseUrl: apiBaseUrl,
   kakaoMapAppKey: process.env.NEXT_PUBLIC_KAKAO_MAP_APP_KEY || "",
+  usesDevelopmentCongestionVoteLocation: apiBaseUrl !== PRODUCTION_API_URL,
 } as const;

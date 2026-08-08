@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { CustomOverlayMap, Map, useKakaoLoader } from "react-kakao-maps-sdk";
 import { Crosshair, Minus, Plus, Search, Wheat } from "lucide-react";
-import type { Coordinates, Store } from "@/entities/types";
+import type { Congestion, Coordinates, Store } from "@/entities/types";
 import { env } from "@/shared/config/env";
-import { DAEJEON_BOUNDS, DEFAULT_LOCATION } from "@/shared/lib/format";
+import { congestionCopy, DAEJEON_BOUNDS, DEFAULT_LOCATION } from "@/shared/lib/format";
 import type { LocationStatus } from "@/shared/hooks/use-geolocation";
 
 type MapFocusRequest = {
@@ -13,6 +13,7 @@ type MapFocusRequest = {
   center: Coordinates;
   level: number;
   offsetForPanel: boolean;
+  preserveLevel?: boolean;
 };
 
 export type MapViewport = {
@@ -32,6 +33,7 @@ type BakeryMapProps = {
   userLocation: Coordinates | null;
   locationStatus: LocationStatus;
   stores: Store[];
+  congestionByStore: ReadonlyMap<number, Congestion>;
   selectedStoreId: number | null;
   onSelect: (storeId: number) => void;
   onLocate: () => void;
@@ -109,8 +111,10 @@ function KakaoMapCanvas(props: BakeryMapProps) {
   useEffect(() => {
     const map = mapRef.current;
     if (!map || loading || error) return;
-    const requestedLevel = Math.min(maximumLevel, Math.max(1, props.focusRequest.level));
-    map.setLevel(requestedLevel);
+    const requestedLevel = props.focusRequest.preserveLevel
+      ? map.getLevel()
+      : Math.min(maximumLevel, Math.max(1, props.focusRequest.level));
+    if (!props.focusRequest.preserveLevel) map.setLevel(requestedLevel);
     map.setCenter(new kakao.maps.LatLng(
       props.focusRequest.center.latitude,
       props.focusRequest.center.longitude,
@@ -201,6 +205,8 @@ function KakaoMapCanvas(props: BakeryMapProps) {
         ) : null}
         {props.stores.map((store) => {
           const selected = props.selectedStoreId === store.id;
+          const congestion = props.congestionByStore.get(store.id);
+          const congestionLabel = congestion ? congestionCopy[congestion.current].shortLabel : null;
           return (
             <CustomOverlayMap
               key={store.id}
@@ -214,9 +220,19 @@ function KakaoMapCanvas(props: BakeryMapProps) {
                 className="bakery-label-marker"
                 data-selected={selected}
                 data-name-visible={showStoreNames}
-                aria-label={store.name}
+                aria-label={congestionLabel ? `${store.name}, 혼잡도 ${congestionLabel}` : store.name}
                 onClick={() => props.onSelect(store.id)}
               >
+                {congestion ? (
+                  <span
+                    className="bakery-label-status"
+                    data-compact={!showStoreNames}
+                    data-level={congestion.current.toLowerCase()}
+                    aria-hidden="true"
+                  >
+                    {showStoreNames ? congestionLabel : null}
+                  </span>
+                ) : null}
                 <span className="bakery-label-icon" aria-hidden="true"><Wheat size={13} /></span>
                 {showStoreNames ? <span className="bakery-label-name">{store.name}</span> : null}
               </button>

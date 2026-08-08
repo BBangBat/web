@@ -12,6 +12,7 @@ import { useAuth } from "@/features/auth/auth-context";
 import { bbangbatApi } from "@/shared/api/bbangbat-api";
 import { useFeedback } from "@/shared/ui/feedback-provider";
 import { Brand } from "@/shared/ui/brand";
+import { limitTextInput } from "@/shared/lib/text-input";
 
 const signupSchema = z.object({
   nickname: z.string().trim().min(2, "닉네임은 2자 이상이어야 해요.").max(20),
@@ -80,10 +81,10 @@ export function SignupForm({
       await acceptAccessToken(result.accessToken);
     },
     onSuccess: () => {
-      notify("기존 계정과 연결했어요.", "success");
+      notify("기존 계정과 연동했어요.", "success");
       router.replace(consumeReturnTo());
     },
-    onError: (error) => notify(error instanceof Error ? error.message : "계정을 연결하지 못했어요.", "error"),
+    onError: (error) => notify(error instanceof Error ? error.message : "계정을 연동하지 못했어요.", "error"),
   });
 
   async function checkNickname() {
@@ -101,15 +102,19 @@ export function SignupForm({
   if (existingAccount) {
     return (
       <main className="signup-page">
-        <div className="signup-header"><Brand /><span>계정 연결</span></div>
         <section className="account-link-card">
           <CircleCheck aria-hidden="true" size={42} />
           <p className="eyebrow">WELCOME BACK</p>
           <h1>이미 가입한 이메일이에요.</h1>
-          <p>새 소셜 계정을 기존 빵밭 계정과 연결하면 이전 빵지도와 기록을 그대로 사용할 수 있어요.</p>
-          <button type="button" className="button button-primary" disabled={linkMutation.isPending} onClick={() => linkMutation.mutate()}>
-            {linkMutation.isPending ? "연결하는 중…" : "기존 계정과 연결하기"}
-          </button>
+          <p>새 소셜 계정을 기존 계정과 연동하시겠어요?</p>
+          <div className="account-link-actions">
+            <button type="button" className="button button-secondary" disabled={linkMutation.isPending} onClick={() => router.replace("/")}>
+              취소
+            </button>
+            <button type="button" className="button button-primary" disabled={linkMutation.isPending} onClick={() => linkMutation.mutate()}>
+              {linkMutation.isPending ? "연동하는 중…" : "기존 계정과 연동하기"}
+            </button>
+          </div>
         </section>
       </main>
     );
@@ -129,7 +134,18 @@ export function SignupForm({
           <span>닉네임</span>
           <div className="field-with-button">
             <UserRound aria-hidden="true" size={18} />
-            <input className="field" placeholder="2~20자" {...register("nickname", { onBlur: checkNickname })} />
+            <input
+              className="field"
+              placeholder="2~20자"
+              maxLength={20}
+              {...register("nickname", {
+                onBlur: checkNickname,
+                onChange: (event) => {
+                  event.target.value = limitTextInput(String(event.target.value), 20);
+                  setNicknameStatus("idle");
+                },
+              })}
+            />
             {nicknameStatus === "available" ? <Check aria-label="사용 가능" size={17} /> : null}
           </div>
           {nicknameStatus === "checking" ? <small>사용할 수 있는지 확인 중…</small> : null}

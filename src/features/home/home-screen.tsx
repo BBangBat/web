@@ -11,14 +11,20 @@ import {
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Heart, MapPin, Search, X } from "lucide-react";
+import type { Store, StoreBounds } from "@/entities/types";
 import { useAuth } from "@/features/auth/auth-context";
 import { useLoginModal } from "@/features/auth/login-modal";
+import {
+  optimisticallySetFavorite,
+  rollbackFavoriteCache,
+} from "@/features/favorites/favorite-cache";
 import { BakeryMap, type MapViewport } from "@/features/map/bakery-map";
 import { StoreCard } from "@/features/stores/store-card";
 import { StoreMapPanel } from "@/features/stores/store-map-panel";
 import { bbangbatApi } from "@/shared/api/bbangbat-api";
 import { useGeolocation } from "@/shared/hooks/use-geolocation";
 import { DEFAULT_LOCATION, distanceInKm, isWithinDaejeon } from "@/shared/lib/format";
+import { limitTextInput } from "@/shared/lib/text-input";
 import { useFeedback } from "@/shared/ui/feedback-provider";
 import { EmptyState, ErrorState, LoadingState } from "@/shared/ui/states";
 
@@ -28,7 +34,7 @@ type SidebarTab = "nearby" | "favorites";
 const sheetSnaps: SheetSnap[] = ["expanded", "half", "collapsed"];
 const COLLAPSED_SHEET_HEIGHT = 270;
 
-export function HomeScreen() {
+export function HomeScreen({ initialStoreId = null }: { initialStoreId?: number | null }) {
   const queryClient = useQueryClient();
   const { accessToken, memberId, status: authStatus } = useAuth();
   const { openLogin } = useLoginModal();
@@ -38,29 +44,59 @@ export function HomeScreen() {
   const [query, setQuery] = useState("");
   const [mapCenter, setMapCenter] = useState(DEFAULT_LOCATION);
   const [viewportCenter, setViewportCenter] = useState(DEFAULT_LOCATION);
+  const [viewportBounds, setViewportBounds] = useState<StoreBounds | null>(null);
   const [areaSearchLocation, setAreaSearchLocation] = useState(DEFAULT_LOCATION);
+  const [areaSearchBounds, setAreaSearchBounds] = useState<StoreBounds | null>(null);
   const [mapFocus, setMapFocus] = useState({
     id: 0,
     center: DEFAULT_LOCATION,
     level: 5,
     offsetForPanel: false,
+    preserveLevel: false,
   });
   const [sheetSnap, setSheetSnap] = useState<SheetSnap>("collapsed");
   const [dragPosition, setDragPosition] = useState<number | null>(null);
-  const [selectedStoreId, setSelectedStoreId] = useState<number | null>(null);
+  const [selectedStoreId, setSelectedStoreId] = useState<number | null>(initialStoreId);
   const [detailPlacement, setDetailPlacement] = useState<"floating" | "sidebar">("floating");
   const sheetRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ startY: number; baseY: number } | null>(null);
   const deferredQuery = useDeferredValue(query.trim());
 
   const storesQuery = useQuery({
-    queryKey: [
-      "stores",
-      areaSearchLocation.latitude.toFixed(4),
-      areaSearchLocation.longitude.toFixed(4),
-    ],
-    queryFn: () => bbangbatApi.getStores(areaSearchLocation),
+    queryKey: areaSearchBounds
+      ? [
+          "stores",
+          "bounds",
+          areaSearchBounds.south.toFixed(5),
+          areaSearchBounds.north.toFixed(5),
+          areaSearchBounds.west.toFixed(5),
+          areaSearchBounds.east.toFixed(5),
+        ]
+      : [
+          "stores",
+          "nearby",
+          areaSearchLocation.latitude.toFixed(4),
+          areaSearchLocation.longitude.toFixed(4),
+        ],
+    queryFn: () => areaSearchBounds
+      ? bbangbatApi.getStoresByBounds(areaSearchBounds, areaSearchLocation)
+      : bbangbatApi.getStores(areaSearchLocation),
     placeholderData: (previousData) => previousData,
+  });
+  const mapBoundsStoresQuery = useQuery({
+    queryKey: viewportBounds
+      ? [
+          "map-stores",
+          viewportBounds.south.toFixed(5),
+          viewportBounds.north.toFixed(5),
+          viewportBounds.west.toFixed(5),
+          viewportBounds.east.toFixed(5),
+        ]
+      : ["map-stores", "initial"],
+    queryFn: () => bbangbatApi.getStoresByBounds(viewportBounds!, viewportCenter),
+    enabled: Boolean(viewportBounds),
+    placeholderData: (previousData) => previousData,
+    staleTime: 30_000,
   });
   const favoriteIdsQuery = useQuery({
     queryKey: ["favorites", memberId],
@@ -69,7 +105,7 @@ export function HomeScreen() {
   });
   const favoriteStoresQuery = useQuery({
     queryKey: ["favorite-stores", memberId, favoriteIdsQuery.data],
-    queryFn: () => Promise.all((favoriteIdsQuery.data ?? []).map((storeId) => bbangbatApi.getStore(storeId))),
+    queryFn: () => bbangbatApi.getStoresBulk(favoriteIdsQuery.data ?? []),
     enabled: activeTab === "favorites" && Boolean(accessToken) && favoriteIdsQuery.isSuccess,
   });
 
@@ -88,17 +124,23 @@ export function HomeScreen() {
     () => new Set(favoriteIdsQuery.data ?? []),
     [favoriteIdsQuery.data],
   );
+  const mapViewportStores = mapBoundsStoresQuery.data ?? nearbyStores;
   const activeStores = activeTab === "nearby" ? nearbyStores : favoriteStores;
   const allKnownStores = useMemo(
-    () => [...nearbyStores, ...favoriteStores],
-    [favoriteStores, nearbyStores],
+    () => [...nearbyStores, ...favoriteStores, ...mapViewportStores],
+    [favoriteStores, mapViewportStores, nearbyStores],
   );
   const activeStoreIds = useMemo(() => activeStores.map((store) => store.id), [activeStores]);
+  const congestionStoreIds = useMemo(() => {
+    const storeIds = new Set(allKnownStores.map((store) => store.id));
+    if (selectedStoreId) storeIds.add(selectedStoreId);
+    return [...storeIds];
+  }, [allKnownStores, selectedStoreId]);
 
   const congestionsQuery = useQuery({
-    queryKey: ["congestions", activeStoreIds],
-    queryFn: () => bbangbatApi.getCongestions(activeStoreIds),
-    enabled: activeStoreIds.length > 0,
+    queryKey: ["congestions", congestionStoreIds],
+    queryFn: () => bbangbatApi.getCongestions(congestionStoreIds),
+    enabled: congestionStoreIds.length > 0,
     refetchInterval: 60_000,
   });
   const summariesQuery = useQuery({
@@ -110,7 +152,7 @@ export function HomeScreen() {
   const searchQuery = useQuery({
     queryKey: ["store-search", deferredQuery],
     queryFn: () => bbangbatApi.searchStores(deferredQuery),
-    enabled: deferredQuery.length >= 2,
+    enabled: deferredQuery.length >= 1,
     staleTime: 5 * 60_000,
   });
 
@@ -135,26 +177,46 @@ export function HomeScreen() {
   const visibleStores = activeStores;
   const mapStores = useMemo(() => {
     const stores = new Map<number, (typeof nearbyStores)[number]>();
-    for (const store of nearbyStores) stores.set(store.id, store);
+    for (const store of mapViewportStores) stores.set(store.id, store);
     if (selectedStore) stores.set(selectedStore.id, selectedStore);
     return [...stores.values()];
-  }, [nearbyStores, selectedStore]);
+  }, [mapViewportStores, selectedStore]);
 
   const favoriteMutation = useMutation({
-    mutationFn: ({ storeId, favorite }: { storeId: number; favorite: boolean }) =>
-      favorite
-        ? bbangbatApi.removeFavorite(storeId, memberId!, accessToken!)
-        : bbangbatApi.addFavorite(storeId, memberId!, accessToken!),
-    onSuccess: async () => {
+    mutationFn: ({ store, nextFavorite }: { store: Store; nextFavorite: boolean }) =>
+      nextFavorite
+        ? bbangbatApi.addFavorite(store.id, memberId!, accessToken!)
+        : bbangbatApi.removeFavorite(store.id, memberId!, accessToken!),
+    onMutate: ({ store, nextFavorite }) =>
+      optimisticallySetFavorite(
+        queryClient,
+        memberId!,
+        store,
+        nextFavorite,
+        allKnownStores,
+      ),
+    onSuccess: (_data, { nextFavorite }) => {
+      notify(nextFavorite ? "나만의 빵지도에 저장했어요." : "나만의 빵지도에서 삭제했어요.", "success");
+    },
+    onError: (error, _variables, snapshot) => {
+      rollbackFavoriteCache(queryClient, memberId!, snapshot);
+      notify(error instanceof Error ? error.message : "즐겨찾기를 변경하지 못했어요.", "error");
+    },
+    onSettled: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["favorites"] }),
         queryClient.invalidateQueries({ queryKey: ["favorite-stores"] }),
       ]);
     },
-    onError: (error) => {
-      notify(error instanceof Error ? error.message : "즐겨찾기를 변경하지 못했어요.", "error");
-    },
   });
+
+  function updateSelectedStoreId(storeId: number | null) {
+    setSelectedStoreId(storeId);
+    const url = new URL(window.location.href);
+    if (storeId) url.searchParams.set("storeId", String(storeId));
+    else url.searchParams.delete("storeId");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }
 
   function sheetBasePosition(snap: SheetSnap, height: number): number {
     if (snap === "expanded") return 0;
@@ -202,17 +264,19 @@ export function HomeScreen() {
   }
 
   async function locateUser() {
-    setSelectedStoreId(null);
+    updateSelectedStoreId(null);
     setSheetSnap("collapsed");
     try {
       const coordinates = await requestLocation();
       if (isWithinDaejeon(coordinates)) {
         focusMap(coordinates, 4);
         setAreaSearchLocation(coordinates);
+        setAreaSearchBounds(null);
         notify("현재 위치로 이동했어요.", "success");
       } else {
         focusMap(DEFAULT_LOCATION, 4);
         setAreaSearchLocation(DEFAULT_LOCATION);
+        setAreaSearchBounds(null);
         notify("현재 위치가 대전 밖이라 대전 기본 위치로 이동했어요.", "info");
       }
     } catch (error) {
@@ -220,18 +284,37 @@ export function HomeScreen() {
     }
   }
 
-  function focusMap(center: typeof DEFAULT_LOCATION, level: number, offsetForPanel = false) {
+  function focusMap(
+    center: typeof DEFAULT_LOCATION,
+    level: number,
+    offsetForPanel = false,
+    preserveLevel = false,
+  ) {
     setMapCenter(center);
     setViewportCenter(center);
-    setMapFocus((current) => ({ id: current.id + 1, center, level, offsetForPanel }));
+    setMapFocus((current) => ({
+      id: current.id + 1,
+      center,
+      level,
+      offsetForPanel,
+      preserveLevel,
+    }));
   }
 
   function selectStore(storeId: number) {
     setDetailPlacement("floating");
-    setSelectedStoreId(storeId);
+    updateSelectedStoreId(storeId);
     setSheetSnap("collapsed");
     const store = allKnownStores.find((item) => item.id === storeId);
     if (store) focusMap(store, 3, true);
+  }
+
+  function selectMapStore(storeId: number) {
+    setDetailPlacement("floating");
+    updateSelectedStoreId(storeId);
+    setSheetSnap("collapsed");
+    const store = allKnownStores.find((item) => item.id === storeId);
+    if (store) focusMap(store, 3, true, true);
   }
 
   async function selectSearchResult(storeId: number) {
@@ -241,7 +324,7 @@ export function HomeScreen() {
         queryFn: () => bbangbatApi.getStore(storeId),
       });
       setDetailPlacement("sidebar");
-      setSelectedStoreId(storeId);
+      updateSelectedStoreId(storeId);
       setSheetSnap("collapsed");
       setQuery("");
       focusMap(store, 3);
@@ -252,22 +335,27 @@ export function HomeScreen() {
 
   function searchCurrentArea() {
     setActiveTab("nearby");
-    setSelectedStoreId(null);
+    updateSelectedStoreId(null);
     setQuery("");
-    const locationChanged = distanceInKm(areaSearchLocation, viewportCenter) >= 0.01;
+    const nextBoundsKey = viewportBounds ? JSON.stringify(viewportBounds) : "";
+    const currentBoundsKey = areaSearchBounds ? JSON.stringify(areaSearchBounds) : "";
+    const areaChanged = distanceInKm(areaSearchLocation, viewportCenter) >= 0.01
+      || nextBoundsKey !== currentBoundsKey;
     setAreaSearchLocation(viewportCenter);
+    setAreaSearchBounds(viewportBounds);
     setMapCenter(viewportCenter);
-    if (!locationChanged) void storesQuery.refetch();
+    if (!areaChanged) void storesQuery.refetch();
   }
 
   function updateViewport(nextViewport: MapViewport) {
     setViewportCenter(nextViewport.center);
+    setViewportBounds(nextViewport.bounds);
   }
 
   function changeTab(tab: SidebarTab) {
     setActiveTab(tab);
     setQuery("");
-    setSelectedStoreId(null);
+    updateSelectedStoreId(null);
     setSheetSnap("collapsed");
   }
 
@@ -276,7 +364,10 @@ export function HomeScreen() {
       openLogin("/");
       return;
     }
-    favoriteMutation.mutate({ storeId, favorite: favoriteIds.has(storeId) });
+    const store = allKnownStores.find((item) => item.id === storeId)
+      ?? (selectedStore?.id === storeId ? selectedStore : null);
+    if (!store) return;
+    favoriteMutation.mutate({ store, nextFavorite: !favoriteIds.has(storeId) });
   }
 
   const listLoading =
@@ -291,9 +382,12 @@ export function HomeScreen() {
         <div className="search-box">
           <Search aria-hidden="true" size={19} />
           <input
-            type="search"
+            type="text"
+            inputMode="search"
+            enterKeyHint="search"
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            maxLength={50}
+            onChange={(event) => setQuery(limitTextInput(event.target.value, 50))}
             placeholder="빵집 이름을 검색해 보세요"
             aria-label="빵집 검색"
           />
@@ -302,7 +396,7 @@ export function HomeScreen() {
               <X aria-hidden="true" size={17} />
             </button>
           ) : null}
-          {deferredQuery.length >= 2 ? (
+          {deferredQuery.length >= 1 ? (
             <div className="search-results">
               {searchQuery.isLoading ? <span>찾는 중…</span> : null}
               {searchQuery.data?.slice(0, 6).map((result) => (
@@ -367,7 +461,7 @@ export function HomeScreen() {
                 dense
                 store={selectedStore}
                 isFavorite={favoriteIds.has(selectedStore.id)}
-                favoritePending={favoriteMutation.isPending && favoriteMutation.variables?.storeId === selectedStore.id}
+                favoritePending={favoriteMutation.isPending && favoriteMutation.variables?.store.id === selectedStore.id}
                 onToggleFavorite={toggleFavorite}
               />
             </div>
@@ -406,15 +500,18 @@ export function HomeScreen() {
                 selected={selectedStoreId === store.id}
                 onSelect={selectStore}
                 isFavorite={favoriteIds.has(store.id)}
-                favoritePending={favoriteMutation.isPending && favoriteMutation.variables?.storeId === store.id}
+                favoritePending={favoriteMutation.isPending && favoriteMutation.variables?.store.id === store.id}
                 onToggleFavorite={toggleFavorite}
               />
             ))}
           </div>
           <footer className="sidebar-footer">
-            <Link href="/privacy">개인정보처리방침</Link>
-            <span aria-hidden="true">·</span>
-            <Link href="/terms">서비스 이용약관</Link>
+            <span className="sidebar-footer-copyright">© 2026 빵밭. All rights reserved.</span>
+            <span className="sidebar-footer-links">
+              <Link href="/privacy">개인정보처리방침</Link>
+              <span className="sidebar-footer-separator" aria-hidden="true">|</span>
+              <Link href="/terms">서비스 이용약관</Link>
+            </span>
           </footer>
         </div>
       </section>
@@ -426,7 +523,7 @@ export function HomeScreen() {
           store={selectedStore}
           congestion={congestionByStore.get(selectedStore.id)}
           summary={summaryByStore.get(selectedStore.id)}
-          onClose={() => setSelectedStoreId(null)}
+          onClose={() => updateSelectedStoreId(null)}
         />
       ) : null}
 
@@ -437,12 +534,13 @@ export function HomeScreen() {
           userLocation={locationStatus === "precise" ? location : null}
           locationStatus={locationStatus}
           stores={mapStores}
+          congestionByStore={congestionByStore}
           selectedStoreId={selectedStoreId}
-          onSelect={selectStore}
+          onSelect={selectMapStore}
           onLocate={() => void locateUser()}
           onSearchHere={searchCurrentArea}
           onViewportChange={updateViewport}
-          onMapClick={() => setSelectedStoreId(null)}
+          onMapClick={() => updateSelectedStoreId(null)}
         />
       </section>
     </main>

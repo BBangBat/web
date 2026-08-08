@@ -3,6 +3,13 @@ export type Coordinates = {
   longitude: number;
 };
 
+export type StoreBounds = {
+  south: number;
+  north: number;
+  west: number;
+  east: number;
+};
+
 export type Store = Coordinates & {
   id: number;
   name: string;
@@ -88,11 +95,16 @@ export type PresignedUpload = {
 export type SignupPayload = {
   tempToken: string;
   nickname: string;
-  profileImageUrl?: string | null;
+  profileImageKey?: string | null;
   gender: Gender;
   ageGroup: AgeGroup;
   termsAgreed: boolean;
   privacyAgreed: boolean;
+};
+
+export type UpdateProfilePayload = {
+  nickname?: string;
+  profileImageKey?: string;
 };
 
 export type CreateReviewPayload = {
@@ -106,4 +118,5 @@ export type CreateReviewPayload = {
 export type ApiErrorBody = {
   code?: string;
   message?: string;
+  retryAfterSeconds?: number;
 };

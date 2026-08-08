@@ -7,13 +7,26 @@ type ApiRequestOptions = RequestInit & {
 export class ApiError extends Error {
   readonly status: number;
   readonly code?: string;
+  readonly retryAfterSeconds?: number;
 
-  constructor(status: number, body: ApiErrorBody | null) {
+  constructor(status: number, body: ApiErrorBody | null, retryAfterSeconds?: number) {
     super(body?.message || "요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.");
     this.name = "ApiError";
     this.status = status;
     this.code = body?.code;
+    this.retryAfterSeconds = body?.retryAfterSeconds ?? retryAfterSeconds;
   }
+}
+
+function parseRetryAfterSeconds(value: string | null): number | undefined {
+  if (!value) return undefined;
+
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds);
+
+  const retryAt = Date.parse(value);
+  if (Number.isNaN(retryAt)) return undefined;
+  return Math.max(0, Math.ceil((retryAt - Date.now()) / 1_000));
 }
 
 export async function apiRequest<T>(
@@ -43,12 +56,18 @@ export async function apiRequest<T>(
     } catch {
       // Some infrastructure errors have no JSON body.
     }
-    throw new ApiError(response.status, body);
+    throw new ApiError(
+      response.status,
+      body,
+      parseRetryAfterSeconds(response.headers.get("Retry-After")),
+    );
   }
 
   if (response.status === 204) {
     return undefined as T;
   }
 
-  return (await response.json()) as T;
+  const responseText = await response.text();
+  if (!responseText.trim()) return undefined as T;
+  return JSON.parse(responseText) as T;
 }

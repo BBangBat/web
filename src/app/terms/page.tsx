@@ -1,17 +1,20 @@
 import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 
 export default function TermsPage() {
   return (
     <main className="legal-page">
+      <Link href="/" className="mypage-map-link legal-map-link">
+        <ArrowLeft aria-hidden="true" size={21} />
+        <span>지도로 돌아가기</span>
+      </Link>
       <header className="legal-header">
-        <p className="eyebrow">BBANGBAT TERMS</p>
         <h1>서비스 이용약관</h1>
-        <p>시행일: 2026년 8월 7일</p>
+        <p className="legal-meta">
+          <span>버전 1.0</span>
+          <span>시행일: 2026년 8월 7일</span>
+        </p>
       </header>
-
-      <div className="legal-intro">
-        이 약관은 빵밭이 제공하는 대전 빵집 탐색 및 커뮤니티 서비스의 이용 조건을 정합니다.
-      </div>
 
       <section>
         <h2>1. 목적과 적용</h2>
@@ -72,11 +75,6 @@ export default function TermsPage() {
         <h2>11. 서비스 문의</h2>
         <p>서비스 이용 관련 문의는 빵밭 운영팀 이메일 <a href="mailto:bbangbat.team@gmail.com">bbangbat.team@gmail.com</a>으로 접수할 수 있습니다.</p>
       </section>
-
-      <footer className="legal-footer">
-        <Link href="/">빵지도로 돌아가기</Link>
-        <Link href="/privacy">개인정보처리방침 보기</Link>
-      </footer>
     </main>
   );
 }

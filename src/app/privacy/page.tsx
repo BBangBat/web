@@ -1,17 +1,20 @@
 import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 
 export default function PrivacyPage() {
   return (
     <main className="legal-page">
+      <Link href="/" className="mypage-map-link legal-map-link">
+        <ArrowLeft aria-hidden="true" size={21} />
+        <span>지도로 돌아가기</span>
+      </Link>
       <header className="legal-header">
-        <p className="eyebrow">BBANGBAT POLICY</p>
         <h1>개인정보처리방침</h1>
-        <p>시행일: 2026년 8월 7일</p>
+        <p className="legal-meta">
+          <span>버전 1.0</span>
+          <span>시행일: 2026년 8월 7일</span>
+        </p>
       </header>
-
-      <div className="legal-intro">
-        빵밭은 이용자의 개인정보를 소중하게 다루며, 개인정보 보호법 등 관련 법령을 준수합니다.
-      </div>
 
       <section>
         <h2>1. 개인정보의 처리 목적</h2>
@@ -21,11 +24,11 @@ export default function PrivacyPage() {
       <section>
         <h2>2. 처리하는 개인정보 항목</h2>
         <ul>
-          <li>소셜 로그인: 소셜 계정 식별자, 이메일, 이름 또는 프로필 정보</li>
-          <li>회원 정보: 닉네임, 프로필 이미지, 성별, 연령대</li>
-          <li>서비스 이용: 즐겨찾기, 빵명록, 실시간 톡, 혼잡도 투표 및 이용 기록</li>
-          <li>위치 정보: 주변 빵집 조회와 가게 근처 참여 확인을 위해 이용자가 허용한 경우에만 처리</li>
-          <li>자동 생성 정보: 접속 기록, 기기·브라우저 정보, 쿠키 등 서비스 이용 기록</li>
+          <li><strong>소셜 로그인</strong>: 소셜 계정 식별자, 이메일, 이름 또는 프로필 정보</li>
+          <li><strong>회원 정보</strong>: 닉네임, 프로필 이미지, 성별, 연령대</li>
+          <li><strong>서비스 이용</strong>: 즐겨찾기, 빵명록, 실시간 톡, 혼잡도 투표 및 이용 기록</li>
+          <li><strong>위치 정보</strong>: 주변 빵집 조회와 가게 근처 참여 확인을 위해 이용자가 허용한 경우에만 처리</li>
+          <li><strong>자동 생성 정보</strong>: 접속 기록, 기기·브라우저 정보, 쿠키 등 서비스 이용 기록</li>
         </ul>
       </section>
 
@@ -68,11 +71,6 @@ export default function PrivacyPage() {
         <h2>10. 방침의 변경</h2>
         <p>이 방침이 변경되는 경우 시행일 전에 서비스 화면을 통해 안내합니다.</p>
       </section>
-
-      <footer className="legal-footer">
-        <Link href="/">빵지도로 돌아가기</Link>
-        <Link href="/terms">서비스 이용약관 보기</Link>
-      </footer>
     </main>
   );
 }

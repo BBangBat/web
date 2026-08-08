@@ -11,13 +11,15 @@ import { EmptyState, ErrorState, LoadingState } from "@/shared/ui/states";
 export function FavoritesScreen() {
   const { accessToken, memberId, status } = useAuth();
   const { openLogin } = useLoginModal();
-  const favoritesQuery = useQuery({
-    queryKey: ["favorite-stores", memberId],
-    queryFn: async () => {
-      const ids = await bbangbatApi.getFavorites(memberId!, accessToken!);
-      return Promise.all(ids.map((storeId) => bbangbatApi.getStore(storeId)));
-    },
+  const favoriteIdsQuery = useQuery({
+    queryKey: ["favorites", memberId],
+    queryFn: () => bbangbatApi.getFavorites(memberId!, accessToken!),
     enabled: Boolean(accessToken && memberId),
+  });
+  const favoriteStoresQuery = useQuery({
+    queryKey: ["favorite-stores", memberId, favoriteIdsQuery.data],
+    queryFn: () => bbangbatApi.getStoresBulk(favoriteIdsQuery.data ?? []),
+    enabled: Boolean(accessToken && memberId && favoriteIdsQuery.isSuccess),
   });
 
   if (status === "initializing") return <LoadingState label="나만의 빵지도를 여는 중" />;
@@ -40,13 +42,15 @@ export function FavoritesScreen() {
         <div><p className="eyebrow">MY BAKERY MAP</p><h1>나만의 빵지도</h1><p>즐겨찾기로 저장한 대전의 빵집이에요.</p></div>
         <Heart aria-hidden="true" size={42} />
       </header>
-      {favoritesQuery.isLoading ? <LoadingState label="나만의 빵지도를 불러오는 중" /> : null}
-      {favoritesQuery.isError ? <ErrorState onRetry={() => void favoritesQuery.refetch()} /> : null}
-      {favoritesQuery.data?.length === 0 ? (
+      {favoriteIdsQuery.isLoading || favoriteStoresQuery.isLoading ? <LoadingState label="나만의 빵지도를 불러오는 중" /> : null}
+      {favoriteIdsQuery.isError || favoriteStoresQuery.isError ? (
+        <ErrorState onRetry={() => void Promise.all([favoriteIdsQuery.refetch(), favoriteStoresQuery.refetch()])} />
+      ) : null}
+      {favoriteStoresQuery.data?.length === 0 ? (
         <EmptyState title="아직 저장한 빵집이 없어요" description="빵집 상세에서 하트를 눌러 나만의 빵지도를 채워보세요." />
       ) : null}
       <div className="collection-grid">
-        {favoritesQuery.data?.map((store) => <StoreCard key={store.id} store={store} />)}
+        {favoriteStoresQuery.data?.map((store) => <StoreCard key={store.id} store={store} />)}
       </div>
     </main>
   );

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Heart, Map, NotebookText, UserRound } from "lucide-react";
 import { useAuth } from "@/features/auth/auth-context";
 import { useLoginModal } from "@/features/auth/login-modal";
+import { MemberAvatar } from "@/features/members/member-avatar";
 import { Brand } from "@/shared/ui/brand";
 
 const navigation = [
@@ -29,13 +30,15 @@ export function AppHeader({ home = false }: { home?: boolean }) {
         <Brand iconOnly />
         {status === "authenticated" ? (
           <Link href="/mypage" className="profile-link" aria-label="마이페이지">
-            <span aria-hidden="true">{member?.nickname.slice(0, 1)}</span>
             <strong>{member?.nickname}</strong>
+            <MemberAvatar imageUrl={member?.profileImageUrl} className="profile-link-avatar" />
           </Link>
-        ) : (
+        ) : status === "anonymous" ? (
           <button type="button" className="button button-primary button-small" onClick={() => openLogin("/")}>
-            로그인
+            로그인/가입
           </button>
+        ) : (
+          <span className="header-auth-placeholder" aria-hidden="true" />
         )}
       </div>
     </header>
