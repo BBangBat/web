@@ -98,7 +98,6 @@ describe("SignupForm", () => {
     expect(unknownButtons).toHaveLength(2);
     expect(unknownButtons[0]).toHaveAttribute("aria-pressed", "false");
     expect(unknownButtons[1]).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getByText(/정보 제공을 원하지 않으면/)).toBeInTheDocument();
   });
 
   it("소셜 값이 없으면 성별과 연령대를 미리 선택하지 않고 직접 선택하게 한다", async () => {

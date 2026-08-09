@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
+  Check,
   ChevronRight,
   Heart,
   LayoutDashboard,
@@ -15,9 +16,10 @@ import {
   Pencil,
   Settings,
   Star,
+  UserRound,
   X,
 } from "lucide-react";
-import type { MyReview, SocialProvider, Store } from "@/entities/types";
+import type { AgeGroup, Gender, MyReview, SocialProvider, Store } from "@/entities/types";
 import { useAuth } from "@/features/auth/auth-context";
 import { SOCIAL_LINK_MEMBER_KEY } from "@/features/auth/social-link-flow";
 import {
@@ -39,6 +41,13 @@ import { StoreCard } from "@/features/stores/store-card";
 import { bbangbatApi } from "@/shared/api/bbangbat-api";
 import { ApiError } from "@/shared/api/client";
 import { featureFlags } from "@/shared/config/features";
+import { useNicknameAvailability } from "@/shared/hooks/use-nickname-availability";
+import {
+  AGE_GROUP_LABEL,
+  AGE_GROUP_OPTIONS,
+  GENDER_LABEL,
+  GENDER_OPTIONS,
+} from "@/shared/lib/member-demographics";
 import {
   compactReviewDate,
   compactAddress,
@@ -50,6 +59,7 @@ import {
   isValidNickname,
   limitTextInput,
   NAME_MAX_LENGTH,
+  NICKNAME_ERROR_MESSAGE,
   NICKNAME_MAX_LENGTH,
 } from "@/shared/lib/text-input";
 import { reviewMapHref } from "@/shared/lib/review-navigation";
@@ -167,10 +177,12 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
   } = useAuth();
   const { openLogin } = useLoginModal();
   const { notify } = useFeedback();
-  const [profileModal, setProfileModal] = useState<"profile" | "avatar-preview" | "withdraw" | null>(null);
+  const [profileModal, setProfileModal] = useState<"profile" | "avatar-preview" | "demographics" | "withdraw" | null>(null);
   const [nicknameDraft, setNicknameDraft] = useState("");
   const [profileImageDraft, setProfileImageDraft] = useState<File | null>(null);
   const [profileImagePreviewUrl, setProfileImagePreviewUrl] = useState<string | null>(null);
+  const [genderDraft, setGenderDraft] = useState<Gender | null>(null);
+  const [ageGroupDraft, setAgeGroupDraft] = useState<AgeGroup | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [reviewToDelete, setReviewToDelete] = useState<MyReview | null>(null);
@@ -181,6 +193,14 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
   const withdrawalPendingRef = useRef(false);
   const withdrawalResumeRef = useRef(false);
   const reviewDeleteTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const {
+    patternInvalid: nicknamePatternInvalid,
+    status: nicknameStatus,
+  } = useNicknameAvailability({
+    nickname: nicknameDraft,
+    currentNickname: member?.nickname,
+    enabled: profileModal === "profile",
+  });
   const statsQuery = useQuery({
     queryKey: ["member-stats", memberId],
     queryFn: () => bbangbatApi.getMemberStats(accessToken!),
@@ -371,6 +391,20 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
     ),
   });
 
+  const demographicsMutation = useMutation({
+    mutationFn: ({ gender, ageGroup }: { gender?: Gender; ageGroup?: AgeGroup }) =>
+      bbangbatApi.updateProfile({ gender, ageGroup }, accessToken!),
+    onSuccess: (nextMember) => {
+      updateMember(nextMember);
+      closeProfileModal();
+      notify("성별과 연령대를 수정했어요.", "success");
+    },
+    onError: (error) => notify(
+      error instanceof Error ? error.message : "성별과 연령대를 수정하지 못했어요.",
+      "error",
+    ),
+  });
+
   useEffect(() => () => {
     if (profileImagePreviewUrl) URL.revokeObjectURL(profileImagePreviewUrl);
   }, [profileImagePreviewUrl]);
@@ -414,13 +448,15 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
   }, [completeWithdrawal, memberId, notify, status]);
 
   function openProfileModal(
-    nextModal: "profile" | "avatar-preview" | "withdraw",
+    nextModal: "profile" | "avatar-preview" | "demographics" | "withdraw",
     trigger: HTMLElement,
   ) {
     modalTriggerRef.current = trigger;
     setNicknameDraft(member?.nickname ?? "");
     setProfileImageDraft(null);
     setProfileImagePreviewUrl(null);
+    setGenderDraft(member?.gender ?? "UNKNOWN");
+    setAgeGroupDraft(member?.ageGroup ?? "UNKNOWN");
     setProfileModal(nextModal);
   }
 
@@ -480,7 +516,15 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
     }
     const nickname = nicknameDraft;
     if (!isValidNickname(nickname)) {
-      notify("닉네임은 한글, 영문, 숫자만 2~10자로 입력해 주세요.", "error");
+      notify(NICKNAME_ERROR_MESSAGE, "error");
+      return;
+    }
+    if (nicknameStatus === "checking") {
+      notify("닉네임을 확인하고 있어요.", "info");
+      return;
+    }
+    if (nicknameStatus === "taken") {
+      notify("이미 사용 중인 닉네임이에요.", "error");
       return;
     }
     const nextNickname = nickname === member?.nickname ? undefined : nickname;
@@ -537,6 +581,17 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
       return;
     }
     nameMutation.mutate(nameDraft);
+  }
+
+  function saveDemographics() {
+    if (!genderDraft || !ageGroupDraft) return;
+    const gender = genderDraft === member?.gender ? undefined : genderDraft;
+    const ageGroup = ageGroupDraft === member?.ageGroup ? undefined : ageGroupDraft;
+    if (!gender && !ageGroup) {
+      notify("변경된 정보가 없어요.", "info");
+      return;
+    }
+    demographicsMutation.mutate({ gender, ageGroup });
   }
 
   if (status === "initializing") {
@@ -794,6 +849,32 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
                   )}
                 </div>
                 <div><span>이메일</span><strong>{member?.email}</strong></div>
+                <div>
+                  <span>성별</span>
+                  <div className="mypage-account-value">
+                    <strong>{member ? GENDER_LABEL[member.gender] : "-"}</strong>
+                    <button
+                      type="button"
+                      aria-label="성별 수정"
+                      onClick={(event) => openProfileModal("demographics", event.currentTarget)}
+                    >
+                      수정
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <span>연령대</span>
+                  <div className="mypage-account-value">
+                    <strong>{member ? AGE_GROUP_LABEL[member.ageGroup] : "-"}</strong>
+                    <button
+                      type="button"
+                      aria-label="연령대 수정"
+                      onClick={(event) => openProfileModal("demographics", event.currentTarget)}
+                    >
+                      수정
+                    </button>
+                  </div>
+                </div>
               </div>
               <section className="mypage-account-section" aria-labelledby="mypage-social-title">
                 <h3 id="mypage-social-title">소셜 연동</h3>
@@ -942,21 +1023,34 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
                     event.target.value = "";
                   }}
                 />
-                <label className="profile-nickname-field">
-                  <span>닉네임</span>
-                  <input
-                    value={nicknameDraft}
-                    onChange={(event) => setNicknameDraft(limitTextInput(event.target.value, NICKNAME_MAX_LENGTH))}
-                    minLength={2}
-                    maxLength={NICKNAME_MAX_LENGTH}
-                    pattern="[가-힣A-Za-z0-9]{2,10}"
-                    title="한글, 영문, 숫자만 2~10자로 입력해 주세요."
-                  />
-                  <small>{Array.from(nicknameDraft).length}/{NICKNAME_MAX_LENGTH}</small>
-                </label>
+                <div className="profile-nickname-field">
+                  <span id="profile-nickname-label">닉네임</span>
+                  <div className="field-with-button" data-availability={nicknameStatus}>
+                    <UserRound aria-hidden="true" size={18} />
+                    <input
+                      className="field"
+                      value={nicknameDraft}
+                      onChange={(event) => setNicknameDraft(limitTextInput(event.target.value, NICKNAME_MAX_LENGTH))}
+                      minLength={2}
+                      maxLength={NICKNAME_MAX_LENGTH}
+                      pattern="[가-힣A-Za-z0-9]{2,10}"
+                      title={NICKNAME_ERROR_MESSAGE}
+                      aria-labelledby="profile-nickname-label"
+                      aria-invalid={nicknamePatternInvalid || nicknameStatus === "taken"}
+                    />
+                    {nicknameStatus === "available" ? <Check aria-label="사용 가능" size={17} /> : null}
+                  </div>
+                  {nicknameStatus === "taken" ? <p className="field-error">이미 사용 중인 닉네임이에요.</p> : null}
+                  {nicknamePatternInvalid ? <p className="field-error">{NICKNAME_ERROR_MESSAGE}</p> : null}
+                </div>
                 <div className="profile-modal-actions">
                   <button type="button" className="button button-secondary" onClick={closeProfileModal}>취소</button>
-                  <button type="button" className="button button-primary" disabled={profileMutation.isPending} onClick={saveProfile}>
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    disabled={profileMutation.isPending || nicknameStatus === "checking" || nicknameStatus === "taken"}
+                    onClick={saveProfile}
+                  >
                     {profileMutation.isPending ? "저장 중…" : "저장"}
                   </button>
                 </div>
@@ -966,6 +1060,56 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
               <>
                 <h2 id="profile-modal-title">프로필 사진</h2>
                 <MemberAvatar imageUrl={member?.profileImageUrl} className="profile-avatar-preview" />
+              </>
+            ) : null}
+            {profileModal === "demographics" ? (
+              <>
+                <h2 id="profile-modal-title">성별·연령대 수정</h2>
+                <div className="profile-demographics-fields">
+                  <fieldset className="profile-demographics-field">
+                    <legend>성별</legend>
+                    <div className="choice-grid choice-grid-gender">
+                      {GENDER_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          data-selected={genderDraft === option.value}
+                          aria-pressed={genderDraft === option.value}
+                          onClick={() => setGenderDraft(option.value)}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </fieldset>
+                  <fieldset className="profile-demographics-field">
+                    <legend>연령대</legend>
+                    <div className="choice-grid choice-grid-age">
+                      {AGE_GROUP_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          data-selected={ageGroupDraft === option.value}
+                          aria-pressed={ageGroupDraft === option.value}
+                          onClick={() => setAgeGroupDraft(option.value)}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  </fieldset>
+                </div>
+                <div className="profile-modal-actions">
+                  <button type="button" className="button button-secondary" onClick={closeProfileModal}>취소</button>
+                  <button
+                    type="button"
+                    className="button button-primary"
+                    disabled={demographicsMutation.isPending}
+                    onClick={saveDemographics}
+                  >
+                    {demographicsMutation.isPending ? "저장 중…" : "저장"}
+                  </button>
+                </div>
               </>
             ) : null}
             {profileModal === "withdraw" ? (

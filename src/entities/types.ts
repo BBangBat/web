@@ -138,6 +138,8 @@ export type UpdateProfilePayload = {
   name?: string;
   nickname?: string;
   profileImageKey?: string;
+  gender?: Gender;
+  ageGroup?: AgeGroup;
 };
 
 export type CreateReviewPayload = {

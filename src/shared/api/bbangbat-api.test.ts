@@ -53,7 +53,7 @@ describe("bbangbatApi profile", () => {
     expect(uploadRequest.body).toBe(file);
   });
 
-  it("PATCH /me에는 이름과 URL이 아닌 profileImageKey를 전달한다", async () => {
+  it("PATCH /me에는 변경할 프로필과 성별 및 연령대만 전달한다", async () => {
     const member = {
       id: 7,
       email: "bread@example.com",
@@ -71,7 +71,12 @@ describe("bbangbatApi profile", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
-      bbangbatApi.updateProfile({ name: "홍길동", profileImageKey: "members/profile-key" }, "access-token"),
+      bbangbatApi.updateProfile({
+        name: "홍길동",
+        profileImageKey: "members/profile-key",
+        gender: "UNKNOWN",
+        ageGroup: "THIRTIES",
+      }, "access-token"),
     ).resolves.toEqual(member);
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/members/me");
@@ -80,6 +85,8 @@ describe("bbangbatApi profile", () => {
     expect(JSON.parse(String(request.body))).toEqual({
       name: "홍길동",
       profileImageKey: "members/profile-key",
+      gender: "UNKNOWN",
+      ageGroup: "THIRTIES",
     });
   });
 
