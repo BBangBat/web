@@ -39,9 +39,11 @@ const COLLAPSED_SHEET_HEIGHT = 270;
 export function HomeScreen({
   initialStoreId = null,
   initialDetailPlacement = "floating",
+  initialReviewId = null,
 }: {
   initialStoreId?: number | null;
   initialDetailPlacement?: DetailPlacement;
+  initialReviewId?: number | null;
 }) {
   const queryClient = useQueryClient();
   const { accessToken, memberId, status: authStatus } = useAuth();
@@ -64,6 +66,7 @@ export function HomeScreen({
   const [sheetSnap, setSheetSnap] = useState<SheetSnap>("collapsed");
   const [dragPosition, setDragPosition] = useState<number | null>(null);
   const [selectedStoreId, setSelectedStoreId] = useState<number | null>(initialStoreId);
+  const [pendingInitialReviewId, setPendingInitialReviewId] = useState<number | null>(initialReviewId);
   const [searchedStore, setSearchedStore] = useState<Store | null>(null);
   const [detailOpen, setDetailOpen] = useState(Boolean(initialStoreId));
   const [detailPlacement, setDetailPlacement] = useState<DetailPlacement>(initialDetailPlacement);
@@ -222,11 +225,13 @@ export function HomeScreen({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["favorites"] }),
         queryClient.invalidateQueries({ queryKey: ["favorite-stores"] }),
+        queryClient.invalidateQueries({ queryKey: ["member-stats"] }),
       ]);
     },
   });
 
   function updateSelectedStoreId(storeId: number | null, placement?: DetailPlacement) {
+    setPendingInitialReviewId(null);
     setSelectedStoreId(storeId);
     setDetailOpen(Boolean(storeId));
     if (placement) setDetailPlacement(placement);
@@ -239,6 +244,7 @@ export function HomeScreen({
       url.searchParams.delete("storeId");
       url.searchParams.delete("detail");
     }
+    url.searchParams.delete("reviewId");
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }
 
@@ -540,6 +546,8 @@ export function HomeScreen({
               <StoreCard
                 dense
                 store={selectedStore}
+                congestion={congestionByStore.get(selectedStore.id)}
+                showCongestion
                 onSelect={openSelectedStoreDetail}
                 isFavorite={favoriteIds.has(selectedStore.id)}
                 favoritePending={favoriteMutation.isPending && favoriteMutation.variables?.store.id === selectedStore.id}
@@ -579,6 +587,7 @@ export function HomeScreen({
                 store={store}
                 location={location}
                 congestion={congestionByStore.get(store.id)}
+                showCongestion
                 summary={summaryByStore.get(store.id)}
                 selected={selectedStoreId === store.id}
                 onSelect={selectStore}
@@ -606,6 +615,7 @@ export function HomeScreen({
           store={selectedStore}
           congestion={congestionByStore.get(selectedStore.id)}
           summary={summaryByStore.get(selectedStore.id)}
+          initialReviewId={selectedStore.id === initialStoreId ? pendingInitialReviewId : null}
           onClose={closeSelectedStoreDetail}
         />
       ) : null}

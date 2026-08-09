@@ -81,6 +81,7 @@ describe("apiRequest", () => {
       "/auth/token/refresh",
       "/api/members/favorites/7",
     ]);
+    expect((fetchMock.mock.calls[1]?.[1] as RequestInit).credentials).toBe("include");
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get("Authorization"))
       .toBe("Bearer expired-access-token");
     expect(new Headers(fetchMock.mock.calls[2]?.[1]?.headers).get("Authorization"))

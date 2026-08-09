@@ -115,7 +115,7 @@ function isExplicitlyLoggedOut() {
 function isAuthHandoffPath(pathname: string, search: string) {
   if (pathname === "/signup") return true;
   return pathname === "/oauth2/callback"
-    && new URLSearchParams(search).has("access_token");
+    && new URLSearchParams(search).has("code");
 }
 
 function isAuthenticationFailure(error: unknown) {

@@ -13,11 +13,19 @@ export default async function HomePage(props: PageProps<"/">) {
     ? searchParams.detail[0]
     : searchParams.detail;
   const initialDetailPlacement = rawDetailPlacement === "sidebar" ? "sidebar" : "floating";
+  const rawReviewId = Array.isArray(searchParams.reviewId)
+    ? searchParams.reviewId[0]
+    : searchParams.reviewId;
+  const parsedReviewId = Number(rawReviewId);
+  const initialReviewId = Number.isInteger(parsedReviewId) && parsedReviewId > 0
+    ? parsedReviewId
+    : null;
 
   return (
     <HomeScreen
       initialStoreId={initialStoreId}
       initialDetailPlacement={initialDetailPlacement}
+      initialReviewId={initialReviewId}
     />
   );
 }

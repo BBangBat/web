@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Check, ChevronRight, CircleCheck, UserRound, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, UserRound, X } from "lucide-react";
 import { z } from "zod";
 import type { AgeGroup } from "@/entities/types";
 import { useAuth } from "@/features/auth/auth-context";
@@ -161,7 +161,6 @@ export function SignupForm({
     return (
       <main className="signup-page">
         <section className="account-link-card">
-          <CircleCheck aria-hidden="true" size={42} />
           <p className="eyebrow">WELCOME BACK</p>
           <h1>이미 가입한 이메일이에요.</h1>
           <p>새 소셜 계정을 기존 계정과 연동하시겠어요?</p>

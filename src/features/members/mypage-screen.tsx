@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -17,9 +17,18 @@ import {
   Star,
   X,
 } from "lucide-react";
-import type { SocialProvider, Store } from "@/entities/types";
+import type { MyReview, SocialProvider, Store } from "@/entities/types";
 import { useAuth } from "@/features/auth/auth-context";
 import { SOCIAL_LINK_MEMBER_KEY } from "@/features/auth/social-link-flow";
+import {
+  clearSocialUnlinkRequest,
+  readSocialUnlinkRequest,
+  storeSocialUnlinkRequest,
+} from "@/features/auth/social-unlink-flow";
+import {
+  canUnlinkSocial,
+  resolveCurrentSocialProvider,
+} from "@/features/auth/social-account-state";
 import {
   optimisticallySetFavorite,
   rollbackFavoriteCache,
@@ -31,9 +40,10 @@ import { bbangbatApi } from "@/shared/api/bbangbat-api";
 import { ApiError } from "@/shared/api/client";
 import { featureFlags } from "@/shared/config/features";
 import {
+  compactReviewDate,
   compactAddress,
+  congestionCopy,
   hasStoreImage,
-  relativeTime,
 } from "@/shared/lib/format";
 import {
   isValidName,
@@ -42,7 +52,9 @@ import {
   NAME_MAX_LENGTH,
   NICKNAME_MAX_LENGTH,
 } from "@/shared/lib/text-input";
+import { reviewMapHref } from "@/shared/lib/review-navigation";
 import { useFeedback } from "@/shared/ui/feedback-provider";
+import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { LoadingState } from "@/shared/ui/states";
 
 export type MypageTab = "overview" | "reviews" | "favorites" | "profile";
@@ -53,10 +65,14 @@ const activityNavigation = [
   { tab: "favorites", label: "나만의 빵지도", href: "/mypage?tab=favorites", Icon: Heart },
 ] as const;
 
+const mypageTabTitles: Record<MypageTab, string> = {
+  overview: "전체보기",
+  reviews: "내 빵명록",
+  favorites: "나만의 빵지도",
+  profile: "계정 정보",
+};
+
 const supportedProfileImageTypes = ["image/jpeg", "image/png", "image/webp"];
-const WITHDRAWAL_REAUTH_MEMBER_KEY = "bbangbat:withdrawal-reauth-member";
-const WITHDRAWAL_REAUTH_RETURN_TO = "/mypage?tab=profile&withdraw=reauthenticated";
-const SOCIAL_UNLINK_MEMBER_KEY = "bbangbat:social-unlink-member";
 const socialProviders = ["KAKAO", "NAVER"] as const satisfies readonly SocialProvider[];
 const socialProviderCopy = {
   KAKAO: { label: "카카오", symbol: "K", value: "kakao" },
@@ -72,13 +88,69 @@ function MypageMapLink() {
   );
 }
 
-function formatWrittenDate(value: string | null) {
-  if (!value) return "오늘";
-  return new Intl.DateTimeFormat("ko-KR", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(value));
+function MypageReviewStars({ rating }: { rating: number }) {
+  return (
+    <span className="mypage-review-stars" aria-label={`별점 ${rating}점`}>
+      {[1, 2, 3, 4, 5].map((value) => (
+        <Star
+          key={value}
+          aria-hidden="true"
+          size={15}
+          data-filled={rating >= value}
+          fill={rating >= value ? "currentColor" : "none"}
+        />
+      ))}
+    </span>
+  );
+}
+
+function MypageReviewPhotos({
+  imageUrls,
+  compact = false,
+}: {
+  imageUrls: string[];
+  compact?: boolean;
+}) {
+  if (imageUrls.length === 0) return null;
+  return (
+    <div className="mypage-review-photos" data-compact={compact} aria-label="작성 사진 목록">
+      {imageUrls.map((imageUrl, index) => (
+        <div
+          key={`${imageUrl}-${index}`}
+          style={{ backgroundImage: `url(${imageUrl})` }}
+          role="img"
+          aria-label={`작성 사진 ${index + 1}`}
+        />
+      ))}
+    </div>
+  );
+}
+
+function MypageReviewCardContent({
+  review,
+  compact = false,
+}: {
+  review: MyReview;
+  compact?: boolean;
+}) {
+  return (
+    <>
+      <div className="mypage-review-card-heading">
+        <strong>{review.storeName}</strong>
+      </div>
+      <div className="mypage-review-card-rating">
+        <MypageReviewStars rating={review.rating} />
+        <time dateTime={review.createdAt ?? undefined}>{compactReviewDate(review.createdAt)}</time>
+      </div>
+      <p className="mypage-review-card-content">{review.content}</p>
+      {review.menus.length > 0 ? (
+        <div className="mypage-review-menu-list" aria-label="구매 메뉴">
+          {review.menus.map((menu) => <span key={menu}>{menu}</span>)}
+        </div>
+      ) : null}
+      <MypageReviewPhotos imageUrls={review.imageUrls} compact={compact} />
+    </>
+  );
 }
 
 export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
@@ -91,7 +163,6 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
     currentSocialProvider,
     status,
     updateMember,
-    prepareSocialLogin,
     logout,
   } = useAuth();
   const { openLogin } = useLoginModal();
@@ -102,13 +173,14 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
   const [profileImagePreviewUrl, setProfileImagePreviewUrl] = useState<string | null>(null);
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
+  const [reviewToDelete, setReviewToDelete] = useState<MyReview | null>(null);
   const [withdrawalPending, setWithdrawalPending] = useState(false);
   const modalTriggerRef = useRef<HTMLElement | null>(null);
   const profileImageInputRef = useRef<HTMLInputElement>(null);
   const signingOutRef = useRef(false);
   const withdrawalPendingRef = useRef(false);
   const withdrawalResumeRef = useRef(false);
-  const socialUnlinkResumeRef = useRef(false);
+  const reviewDeleteTriggerRef = useRef<HTMLButtonElement | null>(null);
   const statsQuery = useQuery({
     queryKey: ["member-stats", memberId],
     queryFn: () => bbangbatApi.getMemberStats(accessToken!),
@@ -125,31 +197,40 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
     enabled: Boolean(accessToken && memberId) && (initialTab === "overview" || initialTab === "favorites"),
   });
   const requestedFavoriteIds = initialTab === "overview"
-    ? (favoriteIdsQuery.data ?? []).slice(0, 3)
+    ? (favoriteIdsQuery.data ?? []).slice(0, 5)
     : (favoriteIdsQuery.data ?? []);
   const favoriteStoresQuery = useQuery({
     queryKey: ["favorite-stores", memberId, requestedFavoriteIds],
     queryFn: () => bbangbatApi.getStoresBulk(requestedFavoriteIds),
     enabled: favoriteIdsQuery.isSuccess,
   });
+  const favoriteCongestionsQuery = useQuery({
+    queryKey: ["congestions", requestedFavoriteIds],
+    queryFn: () => bbangbatApi.getCongestions(requestedFavoriteIds),
+    enabled: requestedFavoriteIds.length > 0,
+    refetchInterval: 60_000,
+  });
+  const favoriteCongestionByStore = useMemo(
+    () => new Map((favoriteCongestionsQuery.data ?? []).map((item) => [item.storeId, item])),
+    [favoriteCongestionsQuery.data],
+  );
   const socialsQuery = useQuery({
     queryKey: ["member-socials", memberId],
     queryFn: () => bbangbatApi.getMySocials(accessToken!),
     enabled: Boolean(accessToken && memberId) && initialTab === "profile",
   });
-  const resolvedCurrentSocialProvider = currentSocialProvider
-    && (!socialsQuery.data
-      || socialsQuery.data.some((social) => social.provider === currentSocialProvider))
-    ? currentSocialProvider
-    : socialsQuery.data?.length === 1
-      ? socialsQuery.data[0]?.provider ?? null
-      : null;
+  const resolvedCurrentSocialProvider = resolveCurrentSocialProvider(
+    socialsQuery.data,
+    currentSocialProvider,
+  );
   const withdrawalSocialProvider = resolvedCurrentSocialProvider
     ?? socialsQuery.data?.[0]?.provider
     ?? null;
   const deleteMutation = useMutation({
     mutationFn: (reviewId: number) => bbangbatApi.deleteReview(reviewId, accessToken!),
     onSuccess: async () => {
+      setReviewToDelete(null);
+      window.requestAnimationFrame(() => reviewDeleteTriggerRef.current?.focus());
       notify("빵명록을 삭제했어요.", "success");
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["my-reviews"] }),
@@ -193,14 +274,19 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
     },
     onError: (error, provider) => {
       if (error instanceof ApiError && error.code === "SOCIAL_REAUTH_REQUIRED") {
-        notify(`${socialProviderCopy[provider].label} 계정으로 다시 인증해 주세요.`, "info");
         startSocialUnlinkReauthentication(provider);
         return;
       }
-      notify(error instanceof Error ? error.message : "소셜 계정 연동을 해제하지 못했어요.", "error");
+      const message = error instanceof ApiError && error.code === "CURRENT_SOCIAL_CANNOT_UNLINK"
+        ? "현재 로그인 중인 소셜 계정은 연동 해제할 수 없어요."
+        : error instanceof ApiError && error.code === "LAST_SOCIAL_CANNOT_UNLINK"
+          ? "마지막으로 연동된 소셜 계정은 해제할 수 없어요."
+          : error instanceof Error
+            ? error.message
+            : "소셜 계정 연동을 해제하지 못했어요.";
+      notify(message, "error");
     },
   });
-  const unlinkSocial = socialUnlinkMutation.mutate;
 
   const closeProfileModal = useCallback(() => {
     if (withdrawalPendingRef.current) return;
@@ -215,16 +301,19 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
       notify("현재 로그인한 소셜 계정을 확인하고 있어요. 잠시 후 다시 시도해 주세요.", "info");
       return;
     }
-    sessionStorage.setItem(WITHDRAWAL_REAUTH_MEMBER_KEY, memberId);
+    storeSocialUnlinkRequest({
+      action: "withdraw-member",
+      memberId,
+      provider: withdrawalSocialProvider,
+    });
     setProfileModal(null);
-    prepareSocialLogin(WITHDRAWAL_REAUTH_RETURN_TO, withdrawalSocialProvider);
     window.location.assign(
       bbangbatApi.socialUnlinkUrl(
         socialProviderCopy[withdrawalSocialProvider].value,
         window.location.origin,
       ),
     );
-  }, [memberId, notify, prepareSocialLogin, withdrawalSocialProvider]);
+  }, [memberId, notify, withdrawalSocialProvider]);
 
   const completeWithdrawal = useCallback(async () => {
     if (!accessToken || withdrawalPendingRef.current) return;
@@ -314,34 +403,15 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
     withdrawalResumeRef.current = true;
     url.searchParams.delete("withdraw");
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
-    const expectedMemberId = sessionStorage.getItem(WITHDRAWAL_REAUTH_MEMBER_KEY);
-    sessionStorage.removeItem(WITHDRAWAL_REAUTH_MEMBER_KEY);
-    if (expectedMemberId !== memberId) {
+    const unlinkRequest = readSocialUnlinkRequest();
+    clearSocialUnlinkRequest();
+    if (unlinkRequest?.action !== "withdraw-member" || unlinkRequest.memberId !== memberId) {
       notify("탈퇴를 요청한 계정과 다른 계정으로 로그인했어요. 원래 계정으로 다시 시도해 주세요.", "error");
       return;
     }
 
     queueMicrotask(() => void completeWithdrawal());
   }, [completeWithdrawal, memberId, notify, status]);
-
-  useEffect(() => {
-    if (status !== "authenticated" || !memberId || socialUnlinkResumeRef.current) return;
-    const url = new URL(window.location.href);
-    const unlinkProvider = url.searchParams.get("unlink")?.toUpperCase();
-    if (!unlinkProvider || !socialProviders.includes(unlinkProvider as SocialProvider)) return;
-
-    socialUnlinkResumeRef.current = true;
-    url.searchParams.delete("unlink");
-    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
-    const expectedMemberId = sessionStorage.getItem(SOCIAL_UNLINK_MEMBER_KEY);
-    sessionStorage.removeItem(SOCIAL_UNLINK_MEMBER_KEY);
-    if (expectedMemberId !== memberId) {
-      notify("연동 해제를 시작한 계정과 현재 로그인 계정이 달라 요청을 중단했어요.", "error");
-      return;
-    }
-
-    queueMicrotask(() => unlinkSocial(unlinkProvider as SocialProvider));
-  }, [memberId, notify, status, unlinkSocial]);
 
   function openProfileModal(
     nextModal: "profile" | "avatar-preview" | "withdraw",
@@ -359,6 +429,17 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
     void logout().then(() => router.replace("/"));
   }
 
+  function closeReviewDeleteDialog() {
+    if (deleteMutation.isPending) return;
+    setReviewToDelete(null);
+    window.requestAnimationFrame(() => reviewDeleteTriggerRef.current?.focus());
+  }
+
+  function requestReviewDeletion(review: MyReview, trigger: HTMLButtonElement) {
+    reviewDeleteTriggerRef.current = trigger;
+    setReviewToDelete(review);
+  }
+
   function startSocialLink(provider: SocialProvider) {
     if (!memberId || !socialsQuery.isSuccess) {
       notify("연동된 소셜 정보를 확인한 뒤 다시 시도해 주세요.", "info");
@@ -372,15 +453,20 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
 
   function startSocialUnlinkReauthentication(provider: SocialProvider) {
     if (!memberId) return;
-    sessionStorage.setItem(SOCIAL_UNLINK_MEMBER_KEY, memberId);
-    prepareSocialLogin(`/mypage?tab=profile&unlink=${provider}`, provider);
+    storeSocialUnlinkRequest({ action: "unlink-social", memberId, provider });
     window.location.assign(
       bbangbatApi.socialUnlinkUrl(socialProviderCopy[provider].value, window.location.origin),
     );
   }
 
-  function toggleSocial(provider: SocialProvider, linked: boolean) {
+  function toggleSocial(
+    provider: SocialProvider,
+    linked: boolean,
+    current: boolean,
+    lastLinked: boolean,
+  ) {
     if (linked) {
+      if (current || lastLinked || !canUnlinkSocial(provider, resolvedCurrentSocialProvider)) return;
       socialUnlinkMutation.mutate(provider);
       return;
     }
@@ -471,6 +557,11 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
 
   return (
     <main className="mypage-dashboard" data-tab={initialTab}>
+      <header className="mypage-mobile-header">
+        <MypageMapLink />
+        <h1>{mypageTabTitles[initialTab]}</h1>
+        <span aria-hidden="true" />
+      </header>
       <div className="mypage-dashboard-shell">
         <div className="mypage-sidebar-column">
           <MypageMapLink />
@@ -546,19 +637,15 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
                   {reviewsQuery.isLoading ? <LoadingState label="빵명록을 불러오는 중" /> : null}
                   {!reviewsQuery.isLoading && (reviewsQuery.isError || recentReviews.length === 0) ? <p className="mypage-overview-empty">아직 남긴 빵명록이 없어요.</p> : null}
                   <div className="mypage-overview-list">
-                    {recentReviews.map((review) => {
-                      const thumbnail = review.imageUrls[0] || review.storeImageUrl;
-                      return (
-                        <Link key={review.id} href={`/?storeId=${review.storeId}`} className="mypage-review-preview">
-                          <div className="mypage-preview-thumbnail" style={{ backgroundImage: `url(${thumbnail})` }} aria-hidden="true" />
-                          <div className="mypage-review-preview-copy">
-                            <div><strong>{review.storeName}</strong><span><Star aria-hidden="true" size={12} fill="currentColor" /> {review.rating.toFixed(1)}</span></div>
-                            <p>{review.content}</p>
-                            <div className="mypage-preview-meta"><span>{review.menus.join(", ")}</span><time>{formatWrittenDate(review.createdAt)}</time></div>
-                          </div>
-                        </Link>
-                      );
-                    })}
+                    {recentReviews.map((review) => (
+                      <Link
+                        key={review.id}
+                        href={reviewMapHref(review.storeId, review.id)}
+                        className="mypage-review-preview"
+                      >
+                        <MypageReviewCardContent review={review} compact />
+                      </Link>
+                    ))}
                   </div>
                 </section>
 
@@ -570,7 +657,9 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
                   {favoriteIdsQuery.isLoading || favoriteStoresQuery.isLoading ? <LoadingState label="나만의 빵지도를 불러오는 중" /> : null}
                   {!favoriteIdsQuery.isLoading && !favoriteStoresQuery.isLoading && (favoriteIdsQuery.isError || favoriteStoresQuery.isError || favoriteStoresQuery.data?.length === 0) ? <p className="mypage-overview-empty">아직 저장한 빵집이 없어요.</p> : null}
                   <div className="mypage-overview-list">
-                    {favoriteStoresQuery.data?.slice(0, 3).map((store) => (
+                    {favoriteStoresQuery.data?.slice(0, 5).map((store) => {
+                      const congestion = favoriteCongestionByStore.get(store.id);
+                      return (
                         <article key={store.id} className="mypage-favorite-preview">
                           <button
                             type="button"
@@ -587,18 +676,27 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
                             <p>{compactAddress(store.address)}</p>
                           </div>
                           </button>
-                          <button
-                            type="button"
-                            className="mypage-favorite-remove"
-                            aria-label={`${store.name} 즐겨찾기 해제`}
-                            aria-pressed="true"
-                            disabled={favoriteMutation.isPending && favoriteMutation.variables?.id === store.id}
-                            onClick={() => favoriteMutation.mutate(store)}
-                          >
-                            <Heart aria-hidden="true" size={17} fill="currentColor" />
-                          </button>
+                          <div className="mypage-favorite-preview-actions">
+                            {congestion ? (
+                              <span className={`mypage-preview-congestion congestion-${congestion.current.toLowerCase()}`}>
+                                <i aria-hidden="true" />
+                                {congestionCopy[congestion.current].shortLabel}
+                              </span>
+                            ) : <span className="mypage-preview-congestion-loading">확인 중</span>}
+                            <button
+                              type="button"
+                              className="mypage-favorite-remove"
+                              aria-label={`${store.name} 즐겨찾기 해제`}
+                              aria-pressed="true"
+                              disabled={favoriteMutation.isPending && favoriteMutation.variables?.id === store.id}
+                              onClick={() => favoriteMutation.mutate(store)}
+                            >
+                              <Heart aria-hidden="true" size={17} fill="currentColor" />
+                            </button>
+                          </div>
                         </article>
-                    ))}
+                      );
+                    })}
                   </div>
                 </section>
               </div>
@@ -614,16 +712,21 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
               {!reviewsQuery.isLoading && (reviewsQuery.isError || reviewsQuery.data?.length === 0) ? <p className="mypage-tab-empty">아직 남긴 빵명록이 없어요.</p> : null}
               <div className="my-review-grid">
                 {reviewsQuery.data?.map((review) => (
-                  <article key={review.id}>
-                    <Link href={`/?storeId=${review.storeId}`} className="my-review-store">
-                      <div style={{ backgroundImage: `url(${review.storeImageUrl})` }} aria-hidden="true" />
-                      <span><strong>{review.storeName}</strong><small>{relativeTime(review.createdAt)}</small></span>
-                      <ChevronRight aria-hidden="true" size={17} />
+                  <article key={review.id} className="mypage-review-card">
+                    <Link
+                      href={reviewMapHref(review.storeId, review.id)}
+                      className="my-review-content"
+                    >
+                      <MypageReviewCardContent review={review} />
                     </Link>
-                    <p className="review-rating"><Star aria-hidden="true" size={14} fill="currentColor" /> {review.rating.toFixed(1)}</p>
-                    <div className="menu-tags">{review.menus.map((menu) => <span key={menu}>{menu}</span>)}</div>
-                    <p>{review.content}</p>
-                    <button type="button" onClick={() => deleteMutation.mutate(review.id)} disabled={deleteMutation.isPending}>삭제</button>
+                    <button
+                      type="button"
+                      className="my-review-delete"
+                      onClick={(event) => requestReviewDeletion(review, event.currentTarget)}
+                      disabled={deleteMutation.isPending}
+                    >
+                      삭제
+                    </button>
                   </article>
                 ))}
               </div>
@@ -643,6 +746,8 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
                     key={store.id}
                     dense
                     store={store}
+                    congestion={favoriteCongestionByStore.get(store.id)}
+                    showCongestion
                     onSelect={(storeId) => router.push(`/?storeId=${storeId}&detail=sidebar`)}
                     isFavorite
                     favoritePending={favoriteMutation.isPending && favoriteMutation.variables?.id === store.id}
@@ -694,8 +799,10 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
                 <h3 id="mypage-social-title">소셜 연동</h3>
                 {socialProviders.map((provider) => {
                   const copy = socialProviderCopy[provider];
-                  const linked = socialsQuery.data?.some((social) => social.provider === provider) ?? false;
+                  const social = socialsQuery.data?.find((item) => item.provider === provider);
+                  const linked = Boolean(social);
                   const current = linked && provider === resolvedCurrentSocialProvider;
+                  const lastLinked = linked && socialsQuery.data?.length === 1;
                   const pending = socialUnlinkMutation.isPending
                     && socialUnlinkMutation.variables === provider;
                   return (
@@ -709,9 +816,14 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
                         type="button"
                         role="switch"
                         aria-checked={linked}
-                        aria-label={`${copy.label} 계정 ${linked ? "연동 해제" : "연동"}`}
-                        disabled={!socialsQuery.isSuccess || pending}
-                        onClick={() => toggleSocial(provider, linked)}
+                        aria-label={current
+                          ? `${copy.label} 계정 현재 로그인 중, 연동 해제 불가`
+                          : lastLinked
+                            ? `${copy.label} 계정 마지막 연동 수단, 연동 해제 불가`
+                            : `${copy.label} 계정 ${linked ? "연동 해제" : "연동"}`}
+                        data-current={current}
+                        disabled={!socialsQuery.isSuccess || pending || current || lastLinked}
+                        onClick={() => toggleSocial(provider, linked, current, lastLinked)}
                       >
                         <i />
                       </button>
@@ -769,6 +881,19 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
           <span>로그아웃</span>
         </button>
       </nav>
+
+      <ConfirmDialog
+        open={Boolean(reviewToDelete)}
+        title="정말 이 빵명록을 삭제하시겠어요?"
+        description="삭제한 빵명록은 복구할 수 없어요."
+        confirmLabel="삭제하기"
+        pendingLabel="삭제 중…"
+        pending={deleteMutation.isPending}
+        onCancel={closeReviewDeleteDialog}
+        onConfirm={() => {
+          if (reviewToDelete) deleteMutation.mutate(reviewToDelete.id);
+        }}
+      />
 
       {profileModal ? (
         <div

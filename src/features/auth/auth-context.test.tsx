@@ -95,7 +95,7 @@ describe("AuthProvider logout", () => {
   });
 
   it("OAuth 콜백에서는 이전 리프레시 세션을 동시에 복원하지 않는다", async () => {
-    window.history.replaceState(null, "", "/oauth2/callback?access_token=new-token");
+    window.history.replaceState(null, "", "/oauth2/callback?code=one-time-code");
 
     renderAuth();
 
@@ -178,7 +178,7 @@ describe("AuthProvider logout", () => {
   });
 
   it("OAuth를 시작한 제공자를 로그인 완료 후 현재 소셜로 기록한다", async () => {
-    window.history.replaceState(null, "", "/oauth2/callback?access_token=new-token");
+    window.history.replaceState(null, "", "/oauth2/callback?code=one-time-code");
     apiMocks.getMe.mockResolvedValue(member);
     renderSocialAuth();
 

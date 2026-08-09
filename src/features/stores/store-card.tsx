@@ -75,25 +75,29 @@ export function StoreCard({
             {selectContent}
           </Link>
         )}
-        {onToggleFavorite ? (
-          <button
-            type="button"
-            className="store-card-favorite"
-            aria-label={isFavorite ? `${store.name} 즐겨찾기 해제` : `${store.name} 즐겨찾기`}
-            aria-pressed={isFavorite}
-            disabled={favoritePending}
-            onClick={() => onToggleFavorite(store.id)}
-          >
-            <Heart aria-hidden="true" size={18} fill={isFavorite ? "currentColor" : "none"} />
-          </button>
-        ) : null}
-        {showCongestion ? (
-          congestion ? (
-            <span className={`store-card-dense-congestion congestion-${congestion.current.toLowerCase()}`}>
-              <i aria-hidden="true" />
-              {congestionCopy[congestion.current].shortLabel}
-            </span>
-          ) : <span className="store-card-dense-congestion-loading">확인 중</span>
+        {onToggleFavorite || showCongestion ? (
+          <div className="store-card-dense-actions">
+            {showCongestion ? (
+              congestion ? (
+                <span className={`store-card-dense-congestion congestion-${congestion.current.toLowerCase()}`}>
+                  <i aria-hidden="true" />
+                  {congestionCopy[congestion.current].shortLabel}
+                </span>
+              ) : <span className="store-card-dense-congestion-loading">확인 중</span>
+            ) : null}
+            {onToggleFavorite ? (
+              <button
+                type="button"
+                className="store-card-favorite"
+                aria-label={isFavorite ? `${store.name} 즐겨찾기 해제` : `${store.name} 즐겨찾기`}
+                aria-pressed={isFavorite}
+                disabled={favoritePending}
+                onClick={() => onToggleFavorite(store.id)}
+              >
+                <Heart aria-hidden="true" size={18} fill={isFavorite ? "currentColor" : "none"} />
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </div>
     );

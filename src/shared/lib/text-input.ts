@@ -2,6 +2,10 @@ export function limitTextInput(value: string, maxLength: number): string {
   return Array.from(value).slice(0, maxLength).join("");
 }
 
+export function textInputLength(value: string): number {
+  return Array.from(value).length;
+}
+
 export const NICKNAME_MIN_LENGTH = 2;
 export const NICKNAME_MAX_LENGTH = 10;
 export const NAME_MIN_LENGTH = 1;

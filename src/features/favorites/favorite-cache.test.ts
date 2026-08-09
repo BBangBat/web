@@ -19,25 +19,50 @@ describe("favorite cache", () => {
     const queryClient = new QueryClient();
     queryClient.setQueryData(["favorites", "1"], [1]);
     queryClient.setQueryData<Store[]>(["favorite-stores", "1"], []);
+    queryClient.setQueryData(["member-stats", "1"], {
+      reviewCount: 3,
+      favoriteCount: 1,
+      talkCount: 2,
+    });
 
     await optimisticallySetFavorite(queryClient, "1", store, true);
 
     expect(queryClient.getQueryData(["favorites", "1"])).toEqual([2, 1]);
     expect(queryClient.getQueryData<Store[]>(["favorite-stores", "1"])).toEqual([store]);
+    expect(queryClient.getQueryData(["member-stats", "1"])).toEqual({
+      reviewCount: 3,
+      favoriteCount: 2,
+      talkCount: 2,
+    });
   });
 
   it("요청 실패 시 이전 즐겨찾기 캐시로 복구한다", async () => {
     const queryClient = new QueryClient();
     queryClient.setQueryData(["favorites", "1"], [2]);
     queryClient.setQueryData<Store[]>(["favorite-stores", "1"], [store]);
+    queryClient.setQueryData(["member-stats", "1"], {
+      reviewCount: 3,
+      favoriteCount: 1,
+      talkCount: 2,
+    });
 
     const snapshot = await optimisticallySetFavorite(queryClient, "1", store, false);
     expect(queryClient.getQueryData(["favorites", "1"])).toEqual([]);
     expect(queryClient.getQueryData<Store[]>(["favorite-stores", "1"])).toEqual([]);
+    expect(queryClient.getQueryData(["member-stats", "1"])).toEqual({
+      reviewCount: 3,
+      favoriteCount: 0,
+      talkCount: 2,
+    });
 
     rollbackFavoriteCache(queryClient, "1", snapshot);
 
     expect(queryClient.getQueryData(["favorites", "1"])).toEqual([2]);
     expect(queryClient.getQueryData<Store[]>(["favorite-stores", "1"])).toEqual([store]);
+    expect(queryClient.getQueryData(["member-stats", "1"])).toEqual({
+      reviewCount: 3,
+      favoriteCount: 1,
+      talkCount: 2,
+    });
   });
 });

@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { isValidName, isValidNickname, limitTextInput } from "@/shared/lib/text-input";
+import {
+  isValidName,
+  isValidNickname,
+  limitTextInput,
+  textInputLength,
+} from "@/shared/lib/text-input";
 
 describe("text input policy", () => {
   it("한글과 숫자를 각각 한 글자로 세어 최대 길이를 제한한다", () => {
     expect(limitTextInput("빵1234", 4)).toBe("빵123");
+  });
+
+  it("이모지를 포함해 화면의 글자 수와 입력 제한을 같은 기준으로 계산한다", () => {
+    expect(textInputLength("빵🍞밭")).toBe(3);
+    expect(textInputLength(limitTextInput("가".repeat(499) + "🍞추가", 500))).toBe(500);
   });
 
   it("닉네임은 완성형 한글, 영문, 숫자로 구성된 2~10자만 허용한다", () => {

@@ -8,20 +8,25 @@ import {
   SOCIAL_LINK_MEMBER_KEY,
   SOCIAL_LINK_RETURN_TO,
 } from "@/features/auth/social-link-flow";
+import {
+  applyCurrentSocialProvider,
+  resolveCurrentSocialProvider,
+} from "@/features/auth/social-account-state";
+import type { MemberSocial } from "@/entities/types";
 import { bbangbatApi } from "@/shared/api/bbangbat-api";
 import { ApiError } from "@/shared/api/client";
 import { useFeedback } from "@/shared/ui/feedback-provider";
 import { LoadingState } from "@/shared/ui/states";
 
 type LinkCallbackPayload = {
-  tempToken: string | null;
+  code: string | null;
   error: string | null;
 };
 
 export function SocialLinkCallback() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { accessToken, memberId, status } = useAuth();
+  const { accessToken, currentSocialProvider, memberId, status } = useAuth();
   const { notify } = useFeedback();
   const callbackRef = useRef<LinkCallbackPayload | null>(null);
   const startedRef = useRef(false);
@@ -31,7 +36,7 @@ export function SocialLinkCallback() {
     if (!callbackRef.current) {
       const url = new URL(window.location.href);
       callbackRef.current = {
-        tempToken: url.searchParams.get("temp_token"),
+        code: url.searchParams.get("code"),
         error: url.searchParams.get("error"),
       };
       window.history.replaceState(null, "", url.pathname);
@@ -45,7 +50,7 @@ export function SocialLinkCallback() {
       queueMicrotask(() => setErrorMessage(message));
       return;
     }
-    if (!callback.tempToken) {
+    if (!callback.code) {
       queueMicrotask(() => setErrorMessage("소셜 연동 정보를 확인하지 못했어요."));
       return;
     }
@@ -64,9 +69,25 @@ export function SocialLinkCallback() {
     }
 
     startedRef.current = true;
-    bbangbatApi.linkSocial(callback.tempToken, accessToken)
+    bbangbatApi.exchangeOAuthCode(callback.code)
+      .then((result) => {
+        if (result.type !== "LINK" || !result.tempToken) {
+          throw new Error("소셜 연동 교환 결과가 올바르지 않아요.");
+        }
+        return bbangbatApi.linkSocial(result.tempToken, accessToken);
+      })
       .then((socials) => {
-        queryClient.setQueryData(["member-socials", memberId], socials);
+        const queryKey = ["member-socials", memberId];
+        const cachedSocials = queryClient.getQueryData<MemberSocial[]>(queryKey);
+        const stableCurrentProvider = resolveCurrentSocialProvider(
+          cachedSocials ?? socials,
+          currentSocialProvider,
+        );
+        queryClient.setQueryData(
+          queryKey,
+          applyCurrentSocialProvider(socials, stableCurrentProvider),
+        );
+        void queryClient.invalidateQueries({ queryKey });
         notify("소셜 계정을 연동했어요.", "success");
         router.replace(SOCIAL_LINK_RETURN_TO);
       })
@@ -78,7 +99,7 @@ export function SocialLinkCallback() {
             : "소셜 계정을 연동하지 못했어요.";
         setErrorMessage(message);
       });
-  }, [accessToken, memberId, notify, queryClient, router, status]);
+  }, [accessToken, currentSocialProvider, memberId, notify, queryClient, router, status]);
 
   if (errorMessage) {
     return (

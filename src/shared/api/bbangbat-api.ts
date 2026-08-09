@@ -7,6 +7,7 @@ import type {
   MemberSocial,
   MemberStats,
   MyReview,
+  OAuthExchangeResponse,
   PresignedUpload,
   Review,
   SignupPayload,
@@ -20,6 +21,8 @@ import type {
 } from "@/entities/types";
 import { env } from "@/shared/config/env";
 import { ApiError, apiRequest, refreshAccessToken } from "./client";
+
+const oauthExchangeRequests = new Map<string, Promise<OAuthExchangeResponse>>();
 
 function idsQuery(ids: number[]): string {
   return ids.map(String).join(",");
@@ -40,6 +43,19 @@ async function getStoresIndividually(storeIds: number[]) {
 }
 
 export const bbangbatApi = {
+  exchangeOAuthCode(code: string) {
+    const existingRequest = oauthExchangeRequests.get(code);
+    if (existingRequest) return existingRequest;
+
+    const request = apiRequest<OAuthExchangeResponse>("/auth/oauth/exchange", {
+      method: "POST",
+      retryUnauthorized: false,
+      body: JSON.stringify({ code }),
+    });
+    oauthExchangeRequests.set(code, request);
+    return request;
+  },
+
   getStores({ latitude, longitude }: Coordinates) {
     return getStoresAt({ latitude, longitude });
   },

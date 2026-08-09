@@ -73,6 +73,17 @@ export function relativeTime(value: string | null): string {
   }).format(new Date(value));
 }
 
+export function compactReviewDate(value: string | null, now = new Date()): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  if (date.getFullYear() === now.getFullYear()) return `${month}.${day}`;
+  const year = String(date.getFullYear()).slice(-2).padStart(2, "0");
+  return `${year}.${month}.${day}`;
+}
+
 export const congestionCopy: Record<
   CongestionLevel,
   { label: string; shortLabel: string; description: string }

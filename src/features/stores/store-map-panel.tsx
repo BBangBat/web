@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -14,11 +22,11 @@ import {
   RotateCw,
   Send,
   Star,
-  X,
 } from "lucide-react";
 import type { Congestion, CongestionLevel, Store, TalkSummary } from "@/entities/types";
 import { useAuth } from "@/features/auth/auth-context";
 import { useLoginModal } from "@/features/auth/login-modal";
+import { MemberAvatar } from "@/features/members/member-avatar";
 import {
   optimisticallySetFavorite,
   rollbackFavoriteCache,
@@ -36,6 +44,7 @@ import {
 } from "@/shared/lib/congestion-vote-cooldown";
 import {
   averageRating,
+  compactReviewDate,
   compactAddress,
   congestionCopy,
   relativeTime,
@@ -113,10 +122,112 @@ type StoreMapPanelProps = {
   congestion?: Congestion;
   summary?: TalkSummary;
   placement?: "floating" | "sidebar";
+  initialReviewId?: number | null;
   onClose: () => void;
 };
 
-export function StoreMapPanel({ store, congestion, summary, placement = "floating", onClose }: StoreMapPanelProps) {
+type StorePanelTab = "live" | "reviews" | "menu";
+
+export function ReviewPhotoGallery({ imageUrls }: { imageUrls: string[] }) {
+  const galleryRef = useRef<HTMLDivElement>(null);
+  const suppressClickRef = useRef(false);
+  const mouseDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    scrollLeft: number;
+    moved: boolean;
+  } | null>(null);
+
+  function startMouseDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.pointerType !== "mouse") return;
+    mouseDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      scrollLeft: event.currentTarget.scrollLeft,
+      moved: false,
+    };
+  }
+
+  function moveMouseDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = mouseDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const distance = event.clientX - drag.startX;
+    if (Math.abs(distance) > 4 && !drag.moved) {
+      drag.moved = true;
+      event.currentTarget.dataset.dragging = "true";
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+    if (!drag.moved) return;
+    event.preventDefault();
+    event.currentTarget.scrollLeft = drag.scrollLeft - distance;
+  }
+
+  function endMouseDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = mouseDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    suppressClickRef.current = drag.moved;
+    mouseDragRef.current = null;
+    delete event.currentTarget.dataset.dragging;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  function showPhoto(index: number) {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
+    const gallery = galleryRef.current;
+    if (!gallery || imageUrls.length < 2) return;
+    const selectedPhoto = gallery.children.item(index);
+    if (!(selectedPhoto instanceof HTMLElement)) return;
+    gallery.scrollTo({
+      left: Math.max(0, selectedPhoto.offsetLeft - gallery.offsetLeft),
+      behavior: "smooth",
+    });
+  }
+
+  return (
+    <div
+      ref={galleryRef}
+      className="map-panel-review-gallery"
+      data-single={imageUrls.length === 1}
+      aria-label="빵명록 사진 목록"
+      tabIndex={imageUrls.length > 1 ? 0 : undefined}
+      onPointerDown={startMouseDrag}
+      onPointerMove={moveMouseDrag}
+      onPointerUp={endMouseDrag}
+      onPointerCancel={endMouseDrag}
+    >
+      {imageUrls.map((imageUrl, index) => imageUrls.length > 1 ? (
+        <button
+          key={`${imageUrl}-${index}`}
+          type="button"
+          style={{ backgroundImage: `url(${imageUrl})` }}
+          aria-label={`빵명록 사진 ${index + 1}/${imageUrls.length}, 클릭하면 이 사진 보기`}
+          onClick={() => showPhoto(index)}
+        />
+      ) : (
+        <div
+          key={`${imageUrl}-${index}`}
+          style={{ backgroundImage: `url(${imageUrl})` }}
+          role="img"
+          aria-label="빵명록 사진 1/1"
+        />
+      ))}
+    </div>
+  );
+}
+
+export function StoreMapPanel({
+  store,
+  congestion,
+  summary,
+  placement = "floating",
+  initialReviewId = null,
+  onClose,
+}: StoreMapPanelProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { accessToken, memberId } = useAuth();
@@ -124,9 +235,13 @@ export function StoreMapPanel({ store, congestion, summary, placement = "floatin
   const { notify } = useFeedback();
   const [talkContent, setTalkContent] = useState("");
   const [selectedVote, setSelectedVote] = useState<CongestionLevel | null>(null);
-  const [activePanelTab, setActivePanelTab] = useState<"live" | "reviews">("live");
+  const [activePanelTab, setActivePanelTab] = useState<StorePanelTab>(
+    initialReviewId ? "reviews" : "live",
+  );
   const [voteCooldownMinutes, setVoteCooldownMinutes] = useState(0);
   const talkListRef = useRef<HTMLDivElement>(null);
+  const panelContentRef = useRef<HTMLDivElement>(null);
+  const reviewFocusHandledRef = useRef(false);
   const voteCooldownExpiryRef = useRef(0);
 
   useEffect(() => {
@@ -197,13 +312,43 @@ export function StoreMapPanel({ store, congestion, summary, placement = "floatin
   };
   const isFavorite = favoritesQuery.data?.includes(store.id) ?? false;
   const reviews = reviewsQuery.data ?? [];
+  const reviewCount = reviews.length;
+  const reviewTabCountLabel = reviewCount >= 100000
+    ? "99,999+"
+    : reviewCount.toLocaleString("ko-KR");
   const rating = averageRating(reviews);
-  const reviewImages = reviews.flatMap((review) => review.imageUrls).slice(0, 3);
+  const ratingFillPercentage = rating === null ? 0 : Math.min(100, Math.max(0, rating * 20));
+  const storeMenus = store.menus ?? [];
   const talks = useMemo(
     () => [...(talksQuery.data ?? [])].sort((left, right) => right.id - left.id),
     [talksQuery.data],
   );
   const talkCount = talks.length;
+
+  useEffect(() => {
+    if (
+      !initialReviewId
+      || activePanelTab !== "reviews"
+      || !reviewsQuery.isSuccess
+      || reviewFocusHandledRef.current
+    ) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      const content = panelContentRef.current;
+      const target = content?.querySelector<HTMLElement>(`[data-review-id="${initialReviewId}"]`);
+      if (!content || !target) return;
+      const contentRect = content.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const centeredTop = content.scrollTop
+        + targetRect.top
+        - contentRect.top
+        - (content.clientHeight - target.clientHeight) / 2;
+      content.scrollTo({ top: Math.max(0, centeredTop), behavior: "smooth" });
+      reviewFocusHandledRef.current = true;
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [activePanelTab, initialReviewId, reviewsQuery.data, reviewsQuery.isSuccess]);
 
   const favoriteMutation = useMutation({
     mutationFn: (nextFavorite: boolean) =>
@@ -223,6 +368,7 @@ export function StoreMapPanel({ store, congestion, summary, placement = "floatin
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["favorites"] }),
         queryClient.invalidateQueries({ queryKey: ["favorite-stores"] }),
+        queryClient.invalidateQueries({ queryKey: ["member-stats"] }),
       ]);
     },
   });
@@ -341,6 +487,11 @@ export function StoreMapPanel({ store, congestion, summary, placement = "floatin
     router.push(`/reviews/new?storeId=${store.id}`);
   }
 
+  function selectPanelTab(tab: StorePanelTab) {
+    setActivePanelTab(tab);
+    if (panelContentRef.current) panelContentRef.current.scrollTop = 0;
+  }
+
   async function copyStoreFact(label: "주소" | "전화번호", value: string) {
     try {
       await navigator.clipboard.writeText(value);
@@ -352,61 +503,81 @@ export function StoreMapPanel({ store, congestion, summary, placement = "floatin
 
   return (
     <aside className="map-store-panel" data-placement={placement} aria-label={`${store.name} 상세 정보`}>
-      <div className="map-store-toolbar">
-        <button type="button" className="map-store-back" onClick={onClose} aria-label="목록으로 돌아가기">
-          <ArrowLeft aria-hidden="true" size={21} />
-        </button>
-        <div className="map-store-toolbar-actions">
-          <button
-            type="button"
-            className="map-store-favorite"
-            aria-label={isFavorite ? "나만의 빵지도에서 삭제" : "나만의 빵지도에 저장"}
-            aria-pressed={isFavorite}
-            disabled={favoriteMutation.isPending}
-            onClick={toggleFavorite}
-          >
-            <Heart aria-hidden="true" size={20} fill={isFavorite ? "currentColor" : "none"} />
-          </button>
-          <button type="button" className="map-store-close" onClick={onClose} aria-label="상세 닫기">
-            <X aria-hidden="true" size={20} />
-          </button>
-        </div>
-      </div>
-
-      <div className="map-store-content">
-        <div className="map-store-title">
-          <h2>{store.name}</h2>
-          <span className={`congestion-pill congestion-${currentLevel.toLowerCase()}`}>
-            <i aria-hidden="true" />
-            {congestionCopy[currentLevel].shortLabel}
-          </span>
-        </div>
-
-        <div className="map-store-facts">
-          <div className="map-store-fact-row">
-            <p><MapPin aria-hidden="true" size={16} /> <span>{compactAddress(store.address)}</span></p>
-            <button type="button" className="map-store-copy" onClick={() => void copyStoreFact("주소", compactAddress(store.address))} aria-label="주소 복사">
-              <Copy aria-hidden="true" size={15} />
+      <div className="map-store-sticky">
+        <div className="map-store-toolbar">
+          <div className="map-store-toolbar-main">
+            <button type="button" className="map-store-back" onClick={onClose} aria-label="목록으로 돌아가기">
+              <ArrowLeft aria-hidden="true" size={21} />
+            </button>
+            <div className="map-store-toolbar-title">
+              <h2>{store.name}</h2>
+              <span className={`congestion-pill congestion-${currentLevel.toLowerCase()}`}>
+                <i aria-hidden="true" />
+                {congestionCopy[currentLevel].shortLabel}
+              </span>
+            </div>
+          </div>
+          <div className="map-store-toolbar-actions">
+            <button
+              type="button"
+              className="map-store-favorite"
+              aria-label={isFavorite ? "나만의 빵지도에서 삭제" : "나만의 빵지도에 저장"}
+              aria-pressed={isFavorite}
+              disabled={favoriteMutation.isPending}
+              onClick={toggleFavorite}
+            >
+              <Heart aria-hidden="true" size={20} fill={isFavorite ? "currentColor" : "none"} />
             </button>
           </div>
-          {store.phoneNumber ? (
+        </div>
+
+        <div className="map-store-summary">
+          <div className="map-store-facts">
             <div className="map-store-fact-row">
-              <a href={`tel:${store.phoneNumber}`}><Phone aria-hidden="true" size={16} /> <span>{store.phoneNumber}</span></a>
-              <button type="button" className="map-store-copy" onClick={() => void copyStoreFact("전화번호", store.phoneNumber!)} aria-label="전화번호 복사">
+              <p><MapPin aria-hidden="true" size={16} /> <span>{compactAddress(store.address)}</span></p>
+              <button type="button" className="map-store-copy" onClick={() => void copyStoreFact("주소", compactAddress(store.address))} aria-label="주소 복사">
                 <Copy aria-hidden="true" size={15} />
               </button>
             </div>
-          ) : null}
-          <p><Star aria-hidden="true" size={16} fill="currentColor" /> {rating ? rating.toFixed(1) : "평점 없음"} · 빵명록 {reviews.length > 0 ? reviews.length : "없음"}</p>
-        </div>
+            {store.phoneNumber ? (
+              <div className="map-store-fact-row">
+                <a href={`tel:${store.phoneNumber}`}><Phone aria-hidden="true" size={16} /> <span>{store.phoneNumber}</span></a>
+                <button type="button" className="map-store-copy" onClick={() => void copyStoreFact("전화번호", store.phoneNumber!)} aria-label="전화번호 복사">
+                  <Copy aria-hidden="true" size={15} />
+                </button>
+              </div>
+            ) : null}
+            <button
+              type="button"
+              className="map-store-rating-row"
+              onClick={() => selectPanelTab("reviews")}
+              aria-label="빵명록 탭으로 이동"
+            >
+              <span className="map-store-rating-stars" aria-label={rating === null ? "등록된 별점 없음" : `별점 ${rating.toFixed(1)}점`}>
+                <span className="map-store-rating-star-row" aria-hidden="true">
+                  {[1, 2, 3, 4, 5].map((value) => <Star key={value} size={16} />)}
+                </span>
+                <span className="map-store-rating-filled" style={{ width: `${ratingFillPercentage}%` }} aria-hidden="true">
+                  <span className="map-store-rating-star-row">
+                    {[1, 2, 3, 4, 5].map((value) => <Star key={value} size={16} fill="currentColor" />)}
+                  </span>
+                </span>
+              </span>
+              <span>{rating === null ? "평점 없음" : rating.toFixed(1)} · 빵명록 {reviewCount > 0 ? reviewCount.toLocaleString("ko-KR") : "없음"}</span>
+            </button>
+          </div>
 
-        <div className="map-store-tabs" role="tablist" aria-label="가게 상세 메뉴">
-          <button type="button" role="tab" aria-selected={activePanelTab === "live"} onClick={() => setActivePanelTab("live")}>실시간 소식</button>
-          <button type="button" role="tab" aria-selected={activePanelTab === "reviews"} onClick={() => setActivePanelTab("reviews")}>빵명록</button>
+          <div className="map-store-tabs" role="tablist" aria-label="가게 상세 메뉴">
+            <button type="button" role="tab" aria-selected={activePanelTab === "live"} onClick={() => selectPanelTab("live")}>실시간 소식</button>
+            <button type="button" role="tab" aria-selected={activePanelTab === "reviews"} onClick={() => selectPanelTab("reviews")}>빵명록 {reviewTabCountLabel}</button>
+            <button type="button" role="tab" aria-selected={activePanelTab === "menu"} onClick={() => selectPanelTab("menu")}>메뉴</button>
+          </div>
         </div>
+      </div>
 
+      <div ref={panelContentRef} className="map-store-content" data-tab={activePanelTab}>
         {activePanelTab === "live" ? (
-          <div className="map-store-tab-content">
+          <div className="map-store-tab-content map-store-live-tab">
             <section className="map-panel-section map-panel-vote">
               <div className="map-panel-section-title">
                 <h3>실시간 혼잡도</h3>
@@ -443,6 +614,7 @@ export function StoreMapPanel({ store, congestion, summary, placement = "floatin
               </button>
             </section>
 
+            <div className="map-panel-talk-divider" aria-hidden="true" />
             <section className="map-panel-section map-panel-talk">
               <div className="map-panel-section-title">
                 <h3>실시간 톡</h3>
@@ -462,6 +634,7 @@ export function StoreMapPanel({ store, congestion, summary, placement = "floatin
               <div
                 ref={talkListRef}
                 className="map-panel-talk-list"
+                data-empty={talkCount === 0}
                 role="log"
                 aria-label="실시간 톡 목록"
                 aria-live="polite"
@@ -481,30 +654,85 @@ export function StoreMapPanel({ store, congestion, summary, placement = "floatin
               </form>
             </section>
           </div>
-        ) : (
+        ) : null}
+        {activePanelTab === "reviews" ? (
           <div className="map-store-tab-content">
             <section className="map-panel-section map-panel-reviews">
-              <div className="map-panel-section-title">
-                <h3>빵명록</h3>
-                <button type="button" className="map-panel-write-review" onClick={writeReview}>작성하기</button>
-              </div>
-              {reviewImages.length > 0 ? (
-                <div className="map-store-review-images" aria-label="빵명록 사진">
-                  {reviewImages.map((imageUrl) => <div key={imageUrl} style={{ backgroundImage: `url(${imageUrl})` }} />)}
-                </div>
-              ) : null}
+              <button type="button" className="map-panel-write-review" onClick={writeReview}>작성하기</button>
               <div className="map-panel-review-list">
                 {reviews.map((review) => (
-                  <article key={review.id}>
-                    <div><span><Star aria-hidden="true" size={13} fill="currentColor" /> {review.rating.toFixed(1)}</span><time>{relativeTime(review.createdAt)}</time></div>
+                  <article
+                    key={review.id}
+                    data-review-id={review.id}
+                  >
+                    <div className="map-panel-review-author">
+                      <div className="map-panel-review-identity">
+                        <MemberAvatar
+                          imageUrl={review.authorProfileImageUrl}
+                          className="map-panel-review-avatar"
+                        />
+                        <strong>{review.authorNickname}</strong>
+                      </div>
+                    </div>
+                    <div className="map-panel-review-rating-row">
+                      <span className="map-panel-review-stars" aria-label={`별점 ${review.rating}점`}>
+                        {[1, 2, 3, 4, 5].map((value) => (
+                          <Star
+                            key={value}
+                            aria-hidden="true"
+                            size={15}
+                            data-filled={review.rating >= value}
+                            fill={review.rating >= value ? "currentColor" : "none"}
+                          />
+                        ))}
+                      </span>
+                      <time dateTime={review.createdAt ?? undefined}>{compactReviewDate(review.createdAt)}</time>
+                    </div>
                     <p>{review.content}</p>
+                    {review.menus.length > 0 ? (
+                      <div className="map-panel-review-menus" aria-label="구매 메뉴">
+                        {review.menus.map((menu) => <em key={menu}>{menu}</em>)}
+                      </div>
+                    ) : null}
+                    {review.imageUrls.length > 0 ? (
+                      <ReviewPhotoGallery imageUrls={review.imageUrls} />
+                    ) : null}
                   </article>
                 ))}
                 {reviews.length === 0 ? <p className="map-panel-empty">첫 빵명록을 기다리고 있어요.</p> : null}
               </div>
             </section>
           </div>
-        )}
+        ) : null}
+        {activePanelTab === "menu" ? (
+          <div className="map-store-tab-content">
+            <section className="map-panel-section map-panel-menus">
+              {storeMenus.length > 0 ? (
+                <div className="map-panel-menu-list">
+                  {storeMenus.map((menu) => (
+                    <article key={menu.id}>
+                      <div
+                        className="map-panel-menu-image"
+                        style={menu.imageUrl ? { backgroundImage: `url(${menu.imageUrl})` } : undefined}
+                        role={menu.imageUrl ? "img" : undefined}
+                        aria-label={menu.imageUrl ? `${menu.name} 사진` : undefined}
+                      >
+                        {!menu.imageUrl ? <span>사진 준비 중</span> : null}
+                      </div>
+                      <div className="map-panel-menu-copy">
+                        <strong>{menu.name}</strong>
+                        <p>{menu.description}</p>
+                        <b>{menu.price.toLocaleString("ko-KR")}원</b>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <p className="map-panel-menu-empty">아직 등록된 메뉴가 없어요.</p>
+              )}
+            </section>
+          </div>
+        ) : null}
       </div>
     </aside>
   );

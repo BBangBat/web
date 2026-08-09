@@ -116,6 +116,25 @@ describe("bbangbatApi auth", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/members/me");
   });
 
+  it("OAuth 1회용 code는 같은 출처에서 쿠키를 포함해 한 번만 교환한다", async () => {
+    const response = { type: "LOGIN", accessToken: "access-token" } as const;
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(response), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = bbangbatApi.exchangeOAuthCode("one-time-code-api-test");
+    const second = bbangbatApi.exchangeOAuthCode("one-time-code-api-test");
+
+    await expect(Promise.all([first, second])).resolves.toEqual([response, response]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/auth/oauth/exchange");
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(request.method).toBe("POST");
+    expect(request.credentials).toBe("include");
+    expect(JSON.parse(String(request.body))).toEqual({ code: "one-time-code-api-test" });
+  });
+
   it("인증 회원 API에 클라이언트 memberId를 쿼리로 전달하지 않는다", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify([2, 1]), { status: 200 }))
@@ -147,7 +166,7 @@ describe("bbangbatApi auth", () => {
   });
 
   it("연동 소셜 조회·추가·해제를 인증된 내 계정 경로로 요청한다", async () => {
-    const socials = [{ provider: "NAVER" }];
+    const socials = [{ provider: "NAVER", current: true }];
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(socials), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(socials), { status: 200 }))

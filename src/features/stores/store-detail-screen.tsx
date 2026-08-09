@@ -17,6 +17,7 @@ import {
 import type { CongestionLevel } from "@/entities/types";
 import { useAuth } from "@/features/auth/auth-context";
 import { useLoginModal } from "@/features/auth/login-modal";
+import { MemberAvatar } from "@/features/members/member-avatar";
 import {
   optimisticallySetFavorite,
   rollbackFavoriteCache,
@@ -27,6 +28,7 @@ import { featureFlags } from "@/shared/config/features";
 import { getCongestionVoteCoordinates } from "@/shared/hooks/use-geolocation";
 import {
   averageRating,
+  compactReviewDate,
   compactAddress,
   congestionCopy,
   hasStoreImage,
@@ -104,6 +106,7 @@ export function StoreDetailScreen({ storeId }: { storeId: number }) {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["favorites"] }),
         queryClient.invalidateQueries({ queryKey: ["favorite-stores"] }),
+        queryClient.invalidateQueries({ queryKey: ["member-stats"] }),
       ]);
     },
   });
@@ -341,8 +344,8 @@ export function StoreDetailScreen({ storeId }: { storeId: number }) {
                   reviewsQuery.data.map((review) => (
                     <article key={review.id}>
                       <header>
-                        <div className="review-avatar" aria-hidden="true">빵</div>
-                        <div><strong>빵친구 {review.memberId}</strong><span>{relativeTime(review.createdAt)}</span></div>
+                        <MemberAvatar imageUrl={review.authorProfileImageUrl} className="review-avatar" />
+                        <div><strong>{review.authorNickname}</strong><span>{compactReviewDate(review.createdAt)}</span></div>
                         <p><Star aria-hidden="true" size={14} fill="currentColor" /> {review.rating.toFixed(1)}</p>
                       </header>
                       <div className="menu-tags">{review.menus.map((menu) => <span key={menu}>{menu}</span>)}</div>
