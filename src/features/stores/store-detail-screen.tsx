@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState, type FormEvent } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -18,16 +17,24 @@ import {
 import type { CongestionLevel } from "@/entities/types";
 import { useAuth } from "@/features/auth/auth-context";
 import { useLoginModal } from "@/features/auth/login-modal";
+import { MemberAvatar } from "@/features/members/member-avatar";
+import {
+  optimisticallySetFavorite,
+  rollbackFavoriteCache,
+} from "@/features/favorites/favorite-cache";
 import { bbangbatApi } from "@/shared/api/bbangbat-api";
 import { ApiError } from "@/shared/api/client";
-import { getCurrentCoordinates } from "@/shared/hooks/use-geolocation";
+import { featureFlags } from "@/shared/config/features";
+import { getCongestionVoteCoordinates } from "@/shared/hooks/use-geolocation";
 import {
   averageRating,
+  compactReviewDate,
   compactAddress,
   congestionCopy,
   hasStoreImage,
   relativeTime,
 } from "@/shared/lib/format";
+import { limitTextInput } from "@/shared/lib/text-input";
 import { useFeedback } from "@/shared/ui/feedback-provider";
 import { ErrorState, LoadingState } from "@/shared/ui/states";
 
@@ -66,7 +73,7 @@ export function StoreDetailScreen({ storeId }: { storeId: number }) {
   });
   const favoritesQuery = useQuery({
     queryKey: ["favorites", memberId],
-    queryFn: () => bbangbatApi.getFavorites(memberId!, accessToken!),
+    queryFn: () => bbangbatApi.getFavorites(accessToken!),
     enabled: Boolean(accessToken && memberId),
   });
 
@@ -74,28 +81,41 @@ export function StoreDetailScreen({ storeId }: { storeId: number }) {
   const rating = averageRating(reviewsQuery.data ?? []);
 
   const favoriteMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (nextFavorite: boolean) => {
       if (!accessToken || !memberId) throw new ApiError(401, { message: "로그인이 필요해요." });
-      return isFavorite
-        ? bbangbatApi.removeFavorite(storeId, memberId, accessToken)
-        : bbangbatApi.addFavorite(storeId, memberId, accessToken);
+      return nextFavorite
+        ? bbangbatApi.addFavorite(storeId, accessToken)
+        : bbangbatApi.removeFavorite(storeId, accessToken);
     },
-    onSuccess: async () => {
-      notify(isFavorite ? "나만의 빵지도에서 삭제했어요." : "나만의 빵지도에 저장했어요.", "success");
-      await queryClient.invalidateQueries({ queryKey: ["favorites"] });
+    onMutate: (nextFavorite) =>
+      storeQuery.data && memberId
+        ? optimisticallySetFavorite(queryClient, memberId, storeQuery.data, nextFavorite)
+        : undefined,
+    onSuccess: (_data, nextFavorite) => {
+      notify(nextFavorite ? "나만의 빵지도에 저장했어요." : "나만의 빵지도에서 삭제했어요.", "success");
     },
-    onError: (error) => {
+    onError: (error, _nextFavorite, snapshot) => {
+      if (memberId) rollbackFavoriteCache(queryClient, memberId, snapshot);
       if (error instanceof ApiError && error.status === 401) {
         openLogin(`/stores/${storeId}`);
         return;
       }
       notify(error instanceof Error ? error.message : "즐겨찾기를 변경하지 못했어요.", "error");
     },
+    onSettled: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["favorites"] }),
+        queryClient.invalidateQueries({ queryKey: ["favorite-stores"] }),
+        queryClient.invalidateQueries({ queryKey: ["member-stats"] }),
+      ]);
+    },
   });
 
   const voteMutation = useMutation({
     mutationFn: async (level: CongestionLevel) => {
-      const location = await getCurrentCoordinates();
+      const location = await getCongestionVoteCoordinates({
+        developmentCoordinates: storeQuery.data,
+      });
       if (!accessToken) await bbangbatApi.issueAnonymousToken();
       return bbangbatApi.voteCongestion(storeId, level, location, accessToken);
     },
@@ -104,6 +124,26 @@ export function StoreDetailScreen({ storeId }: { storeId: number }) {
       notify("지금 현장을 알려주셔서 고마워요!", "success");
     },
     onError: (error) => {
+      if (error instanceof ApiError && error.code === "CONGESTION_VOTE_COOLDOWN") {
+        const remainingMinutes = error.retryAfterSeconds === undefined
+          ? null
+          : Math.max(1, Math.ceil(error.retryAfterSeconds / 60));
+        notify(
+          remainingMinutes === null
+            ? error.message
+            : `${remainingMinutes}분 뒤 다시 투표할 수 있어요.`,
+          "info",
+        );
+        return;
+      }
+      if (error instanceof ApiError && error.code === "CONGESTION_VOTE_TOO_FAR") {
+        notify("가게에서 300m 이내일 때만 투표할 수 있어요.", "info");
+        return;
+      }
+      if (error instanceof ApiError && error.code === "OUT_OF_SERVICE_AREA") {
+        notify("대전 서비스 지역 안에서만 투표할 수 있어요.", "info");
+        return;
+      }
       if (!accessToken && error instanceof ApiError && error.status === 401) {
         notify("비회원 투표용 쿠키를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.", "error");
         return;
@@ -115,7 +155,7 @@ export function StoreDetailScreen({ storeId }: { storeId: number }) {
   const talkMutation = useMutation({
     mutationFn: (content: string) => {
       if (!accessToken || !memberId) throw new ApiError(401, { message: "톡 작성은 로그인이 필요해요." });
-      return bbangbatApi.sendTalk(storeId, content, memberId, accessToken);
+      return bbangbatApi.sendTalk(storeId, content, accessToken);
     },
     onSuccess: async () => {
       setTalkContent("");
@@ -136,6 +176,18 @@ export function StoreDetailScreen({ storeId }: { storeId: number }) {
     const content = talkContent.trim();
     if (content.length === 0 || content.length > 100) return;
     talkMutation.mutate(content);
+  }
+
+  function writeReview() {
+    if (!featureFlags.reviewWriting) {
+      notify("빵명록 작성 기능은 준비 중이에요.", "info");
+      return;
+    }
+    if (!accessToken || !memberId) {
+      openLogin(`/reviews/new?storeId=${storeId}`);
+      return;
+    }
+    router.push(`/reviews/new?storeId=${storeId}`);
   }
 
   const reviewImages = useMemo(
@@ -165,9 +217,10 @@ export function StoreDetailScreen({ storeId }: { storeId: number }) {
           </button>
           <button
             type="button"
-            onClick={() => favoriteMutation.mutate()}
+            onClick={() => favoriteMutation.mutate(!isFavorite)}
             aria-label={isFavorite ? "나만의 빵지도에서 삭제" : "나만의 빵지도에 저장"}
             aria-pressed={isFavorite}
+            disabled={favoriteMutation.isPending}
           >
             <Heart aria-hidden="true" size={21} fill={isFavorite ? "currentColor" : "none"} />
           </button>
@@ -233,7 +286,7 @@ export function StoreDetailScreen({ storeId }: { storeId: number }) {
                   );
                 })}
               </div>
-              <p className="location-note">가게 반경 200m 안에서 참여할 수 있어요. 제보는 60분 후 사라져요.</p>
+              <p className="location-note">가게에서 300m 이내일 때 참여할 수 있으며, 투표 후 15분 뒤 재투표할 수 있어요.</p>
             </section>
 
             <section className="detail-section talk-section">
@@ -262,7 +315,8 @@ export function StoreDetailScreen({ storeId }: { storeId: number }) {
               <form className="talk-form" onSubmit={submitTalk}>
                 <input
                   value={talkContent}
-                  onChange={(event) => setTalkContent(event.target.value.slice(0, 100))}
+                  onChange={(event) => setTalkContent(limitTextInput(event.target.value, 100))}
+                  maxLength={100}
                   placeholder={accessToken ? "현장 상황을 알려주세요" : "로그인 후 현장 상황을 알려주세요"}
                   aria-label="실시간 톡 내용"
                 />
@@ -276,7 +330,7 @@ export function StoreDetailScreen({ storeId }: { storeId: number }) {
             <section className="detail-section reviews-section">
               <div className="section-heading">
                 <div><Star aria-hidden="true" size={20} /><h2>빵명록</h2></div>
-                <Link href={`/reviews/new?storeId=${storeId}`}>작성하기</Link>
+                <button type="button" onClick={writeReview}>작성하기</button>
               </div>
               {reviewImages.length > 0 ? (
                 <div className="review-image-strip">
@@ -290,8 +344,8 @@ export function StoreDetailScreen({ storeId }: { storeId: number }) {
                   reviewsQuery.data.map((review) => (
                     <article key={review.id}>
                       <header>
-                        <div className="review-avatar" aria-hidden="true">빵</div>
-                        <div><strong>빵친구 {review.memberId}</strong><span>{relativeTime(review.createdAt)}</span></div>
+                        <MemberAvatar imageUrl={review.authorProfileImageUrl} className="review-avatar" />
+                        <div><strong>{review.authorNickname}</strong><span>{compactReviewDate(review.createdAt)}</span></div>
                         <p><Star aria-hidden="true" size={14} fill="currentColor" /> {review.rating.toFixed(1)}</p>
                       </header>
                       <div className="menu-tags">{review.menus.map((menu) => <span key={menu}>{menu}</span>)}</div>
@@ -301,7 +355,7 @@ export function StoreDetailScreen({ storeId }: { storeId: number }) {
                 ) : (
                   <div className="section-empty">
                     <p>아직 빵명록이 없어요.</p>
-                    <Link href={`/reviews/new?storeId=${storeId}`} className="button button-primary button-small">첫 빵명록 남기기</Link>
+                    <button type="button" className="button button-primary button-small" onClick={writeReview}>첫 빵명록 남기기</button>
                   </div>
                 )}
               </div>
@@ -312,7 +366,7 @@ export function StoreDetailScreen({ storeId }: { storeId: number }) {
             <div className="aside-card">
               <span>이 빵집이 마음에 드나요?</span>
               <h2>나만의 빵지도에<br />저장해 두세요.</h2>
-              <button type="button" className="button button-primary" onClick={() => favoriteMutation.mutate()}>
+              <button type="button" className="button button-primary" disabled={favoriteMutation.isPending} onClick={() => favoriteMutation.mutate(!isFavorite)}>
                 <Heart aria-hidden="true" size={17} fill={isFavorite ? "currentColor" : "none"} />
                 {isFavorite ? "저장됨" : "나만의 빵지도에 저장"}
               </button>

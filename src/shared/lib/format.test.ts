@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   averageRating,
+  compactReviewDate,
   compactAddress,
   distanceInKm,
   hasStoreImage,
@@ -27,6 +28,13 @@ describe("format helpers", () => {
   it("calculates an average rating", () => {
     expect(averageRating([{ rating: 5 }, { rating: 4 }, { rating: 3 }])).toBe(4);
     expect(averageRating([])).toBeNull();
+  });
+
+  it("formats review dates without relative time", () => {
+    const now = new Date(2026, 7, 9);
+    expect(compactReviewDate("2026-08-09T12:00:00", now)).toBe("08.09");
+    expect(compactReviewDate("2025-08-08T12:00:00", now)).toBe("25.08.08");
+    expect(compactReviewDate(null, now)).toBe("-");
   });
 
   it("only accepts internal navigation paths", () => {

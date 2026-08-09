@@ -4,7 +4,14 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { AppHeader, BottomNavigation } from "./app-navigation";
 
-const chromeLessRoutes = ["/signup", "/oauth2/callback", "/reviews/new"];
+const chromeLessRoutes = [
+  "/signup",
+  "/oauth2/callback",
+  "/reviews/new",
+  "/mypage",
+  "/privacy",
+  "/terms",
+];
 
 export function AppChrome({ children }: { children: ReactNode }) {
   const pathname = usePathname();

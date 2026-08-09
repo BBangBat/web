@@ -3,12 +3,28 @@ export type Coordinates = {
   longitude: number;
 };
 
+export type StoreBounds = {
+  south: number;
+  north: number;
+  west: number;
+  east: number;
+};
+
+export type StoreMenu = {
+  id: number;
+  name: string;
+  description: string;
+  price: number;
+  imageUrl: string | null;
+};
+
 export type Store = Coordinates & {
   id: number;
   name: string;
   address: string;
   phoneNumber: string | null;
   imageUrl: string;
+  menus?: StoreMenu[];
 };
 
 export type StoreSearchResult = Pick<Store, "id" | "name" | "address">;
@@ -40,6 +56,8 @@ export type TalkSummary = {
 export type Review = {
   id: number;
   memberId: number;
+  authorNickname: string;
+  authorProfileImageUrl: string | null;
   rating: number;
   menus: string[];
   content: string;
@@ -80,6 +98,19 @@ export type MemberStats = {
   talkCount: number;
 };
 
+export type SocialProvider = "NAVER" | "KAKAO";
+
+export type MemberSocial = {
+  provider: SocialProvider;
+  current: boolean;
+};
+
+export type OAuthExchangeResponse =
+  | { type: "LOGIN"; accessToken: string; tempToken?: never; existingAccount?: never }
+  | { type: "SIGNUP"; accessToken?: never; tempToken: string; existingAccount: boolean }
+  | { type: "LINK"; accessToken?: never; tempToken: string; existingAccount?: never }
+  | { type: "UNLINK"; accessToken?: never; tempToken?: never; existingAccount?: never; provider: SocialProvider };
+
 export type PresignedUpload = {
   presignedUrl: string;
   objectKey: string;
@@ -88,11 +119,17 @@ export type PresignedUpload = {
 export type SignupPayload = {
   tempToken: string;
   nickname: string;
-  profileImageUrl?: string | null;
-  gender: Gender;
-  ageGroup: AgeGroup;
+  profileImageKey?: string | null;
+  gender?: Gender;
+  ageGroup?: AgeGroup;
   termsAgreed: boolean;
   privacyAgreed: boolean;
+};
+
+export type UpdateProfilePayload = {
+  name?: string;
+  nickname?: string;
+  profileImageKey?: string;
 };
 
 export type CreateReviewPayload = {
@@ -106,4 +143,5 @@ export type CreateReviewPayload = {
 export type ApiErrorBody = {
   code?: string;
   message?: string;
+  retryAfterSeconds?: number;
 };

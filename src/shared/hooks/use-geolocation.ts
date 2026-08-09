@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { Coordinates } from "@/entities/types";
+import { env } from "@/shared/config/env";
 import { DEFAULT_LOCATION } from "@/shared/lib/format";
 
 export type LocationStatus = "locating" | "precise" | "fallback";
@@ -30,6 +31,21 @@ export function getCurrentCoordinates(): Promise<Coordinates> {
       { enableHighAccuracy: true, timeout: 8_000, maximumAge: 60_000 },
     );
   });
+}
+
+type CongestionVoteCoordinatesOptions = {
+  developmentCoordinates?: Coordinates;
+  useDevelopmentLocation?: boolean;
+  coordinatesProvider?: () => Promise<Coordinates>;
+};
+
+export async function getCongestionVoteCoordinates({
+  developmentCoordinates = DEFAULT_LOCATION,
+  useDevelopmentLocation = env.usesDevelopmentCongestionVoteLocation,
+  coordinatesProvider = getCurrentCoordinates,
+}: CongestionVoteCoordinatesOptions = {}): Promise<Coordinates> {
+  if (useDevelopmentLocation) return developmentCoordinates;
+  return coordinatesProvider();
 }
 
 export function useGeolocation() {

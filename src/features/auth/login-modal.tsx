@@ -11,6 +11,7 @@ import {
 } from "react";
 import { X } from "lucide-react";
 import { useAuth } from "@/features/auth/auth-context";
+import { bbangbatApi } from "@/shared/api/bbangbat-api";
 
 type LoginModalContextValue = {
   openLogin: (returnTo?: string) => void;
@@ -20,8 +21,11 @@ type LoginModalContextValue = {
 const LoginModalContext = createContext<LoginModalContextValue | null>(null);
 
 export function LoginModalProvider({ children }: { children: ReactNode }) {
-  const { beginSocialLogin } = useAuth();
-  const [modal, setModal] = useState({ open: false, returnTo: "/" });
+  const { prepareSocialLogin } = useAuth();
+  const [modal, setModal] = useState({
+    open: false,
+    returnTo: "/",
+  });
 
   const openLogin = useCallback((returnTo = "/") => {
     setModal({ open: true, returnTo });
@@ -64,12 +68,20 @@ export function LoginModalProvider({ children }: { children: ReactNode }) {
             <p className="eyebrow">BBANGBAT LOGIN</p>
             <h2 id="login-modal-title">로그인</h2>
             <div className="social-buttons">
-              <button type="button" className="social-button social-kakao" onClick={() => beginSocialLogin("kakao", modal.returnTo)}>
+              <a
+                className="social-button social-kakao"
+                href={bbangbatApi.socialLoginUrl("kakao", window.location.origin)}
+                onClick={() => prepareSocialLogin(modal.returnTo, "KAKAO")}
+              >
                 <span aria-hidden="true">K</span> 카카오로 시작하기
-              </button>
-              <button type="button" className="social-button social-naver" onClick={() => beginSocialLogin("naver", modal.returnTo)}>
+              </a>
+              <a
+                className="social-button social-naver"
+                href={bbangbatApi.socialLoginUrl("naver", window.location.origin)}
+                onClick={() => prepareSocialLogin(modal.returnTo, "NAVER")}
+              >
                 <span aria-hidden="true">N</span> 네이버로 시작하기
-              </button>
+              </a>
             </div>
           </section>
         </div>
