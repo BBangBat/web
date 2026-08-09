@@ -8,7 +8,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Check, ChevronRight, UserRound, X } from "lucide-react";
 import { z } from "zod";
-import type { AgeGroup } from "@/entities/types";
+import type { AgeGroup, Gender } from "@/entities/types";
 import { useAuth } from "@/features/auth/auth-context";
 import { requestMapLoginModal } from "@/features/auth/login-handoff";
 import { PrivacyContent, TermsContent } from "@/features/legal/legal-content";
@@ -24,8 +24,11 @@ const nicknameErrorMessage = "닉네임은 한글, 영문, 숫자만 2~10자로 
 
 const signupSchema = z.object({
   nickname: z.string().refine(isValidNickname, { message: nicknameErrorMessage }),
-  gender: z.enum(["MALE", "FEMALE"]).optional(),
-  ageGroup: z.enum(["TEENS", "TWENTIES", "THIRTIES", "FORTIES", "FIFTIES", "SIXTIES_PLUS"]).optional(),
+  gender: z.enum(["MALE", "FEMALE", "UNKNOWN"], { error: "성별을 선택해 주세요." }),
+  ageGroup: z.enum(
+    ["TEENS", "TWENTIES", "THIRTIES", "FORTIES", "FIFTIES", "SIXTIES_PLUS", "UNKNOWN"],
+    { error: "연령대를 선택해 주세요." },
+  ),
   termsAgreed: z.boolean().refine(Boolean, { message: "서비스 이용약관 동의가 필요해요." }),
   privacyAgreed: z.boolean().refine(Boolean, { message: "개인정보처리방침 동의가 필요해요." }),
 });
@@ -40,6 +43,13 @@ const ageOptions: { value: AgeGroup; label: string }[] = [
   { value: "FORTIES", label: "40대" },
   { value: "FIFTIES", label: "50대" },
   { value: "SIXTIES_PLUS", label: "60대 이상" },
+  { value: "UNKNOWN", label: "응답하지 않음" },
+];
+
+const genderOptions: { value: Gender; label: string }[] = [
+  { value: "FEMALE", label: "여성" },
+  { value: "MALE", label: "남성" },
+  { value: "UNKNOWN", label: "응답하지 않음" },
 ];
 
 function SignupMapLink() {
@@ -54,9 +64,13 @@ function SignupMapLink() {
 export function SignupForm({
   tempToken,
   existingAccount,
+  initialGender,
+  initialAgeGroup,
 }: {
   tempToken: string;
   existingAccount: boolean;
+  initialGender?: Gender | null;
+  initialAgeGroup?: AgeGroup | null;
 }) {
   const router = useRouter();
   const { acceptAccessToken, consumeReturnTo } = useAuth();
@@ -73,7 +87,13 @@ export function SignupForm({
     formState: { errors },
   } = useForm<SignupFormValues>({
     resolver: zodResolver(signupSchema),
-    defaultValues: { nickname: "", termsAgreed: false, privacyAgreed: false },
+    defaultValues: {
+      nickname: "",
+      ...(initialGender ? { gender: initialGender } : {}),
+      ...(initialAgeGroup ? { ageGroup: initialAgeGroup } : {}),
+      termsAgreed: false,
+      privacyAgreed: false,
+    },
   });
   const selectedGender = useWatch({ control, name: "gender" });
   const selectedAgeGroup = useWatch({ control, name: "ageGroup" });
@@ -247,29 +267,32 @@ export function SignupForm({
           {!nicknamePatternInvalid && errors.nickname ? <p className="field-error">{errors.nickname.message}</p> : null}
         </label>
 
-        <fieldset className="signup-field">
-          <legend>성별</legend>
-          <div className="choice-grid choice-grid-two">
-            {([ ["FEMALE", "여성"], ["MALE", "남성"] ] as const).map(([value, label]) => (
+        <fieldset
+          className="signup-field"
+          aria-describedby={`signup-demographics-notice${errors.gender ? " signup-gender-error" : ""}`}
+        >
+          <legend>성별 <b className="required-mark" aria-label="필수">*</b></legend>
+          <div className="choice-grid choice-grid-gender">
+            {genderOptions.map(({ value, label }) => (
               <button
                 key={value}
                 type="button"
                 data-selected={selectedGender === value}
                 aria-pressed={selectedGender === value}
-                onClick={() => setValue(
-                  "gender",
-                  selectedGender === value ? undefined : value,
-                  { shouldDirty: true, shouldValidate: true },
-                )}
+                onClick={() => setValue("gender", value, { shouldDirty: true, shouldValidate: true })}
               >
                 {label}
               </button>
             ))}
           </div>
+          {errors.gender ? <p id="signup-gender-error" className="field-error">{errors.gender.message}</p> : null}
         </fieldset>
 
-        <fieldset className="signup-field">
-          <legend>연령대</legend>
+        <fieldset
+          className="signup-field"
+          aria-describedby={`signup-demographics-notice${errors.ageGroup ? " signup-age-group-error" : ""}`}
+        >
+          <legend>연령대 <b className="required-mark" aria-label="필수">*</b></legend>
           <div className="choice-grid choice-grid-age">
             {ageOptions.map((option) => (
               <button
@@ -277,17 +300,18 @@ export function SignupForm({
                 type="button"
                 data-selected={selectedAgeGroup === option.value}
                 aria-pressed={selectedAgeGroup === option.value}
-                onClick={() => setValue(
-                  "ageGroup",
-                  selectedAgeGroup === option.value ? undefined : option.value,
-                  { shouldDirty: true, shouldValidate: true },
-                )}
+                onClick={() => setValue("ageGroup", option.value, { shouldDirty: true, shouldValidate: true })}
               >
                 {option.label}
               </button>
             ))}
           </div>
+          {errors.ageGroup ? <p id="signup-age-group-error" className="field-error">{errors.ageGroup.message}</p> : null}
         </fieldset>
+
+        <p id="signup-demographics-notice" className="signup-demographics-notice">
+          성별과 연령대는 서비스 이용 통계와 개선에 사용돼요. 정보 제공을 원하지 않으면 ‘응답하지 않음’을 선택해 주세요.
+        </p>
 
         <div className="agreements">
           <div className="agreement-row">

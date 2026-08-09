@@ -71,14 +71,15 @@ export type MyReview = Omit<Review, "memberId"> & {
   storeImageUrl: string;
 };
 
-export type Gender = "MALE" | "FEMALE";
+export type Gender = "MALE" | "FEMALE" | "UNKNOWN";
 export type AgeGroup =
   | "TEENS"
   | "TWENTIES"
   | "THIRTIES"
   | "FORTIES"
   | "FIFTIES"
-  | "SIXTIES_PLUS";
+  | "SIXTIES_PLUS"
+  | "UNKNOWN";
 
 export type Member = {
   id: number;
@@ -107,7 +108,14 @@ export type MemberSocial = {
 
 export type OAuthExchangeResponse =
   | { type: "LOGIN"; accessToken: string; tempToken?: never; existingAccount?: never }
-  | { type: "SIGNUP"; accessToken?: never; tempToken: string; existingAccount: boolean }
+  | {
+      type: "SIGNUP";
+      accessToken?: never;
+      tempToken: string;
+      existingAccount: boolean;
+      gender?: Gender | null;
+      ageGroup?: AgeGroup | null;
+    }
   | { type: "LINK"; accessToken?: never; tempToken: string; existingAccount?: never }
   | { type: "UNLINK"; accessToken?: never; tempToken?: never; existingAccount?: never; provider: SocialProvider };
 
@@ -120,8 +128,8 @@ export type SignupPayload = {
   tempToken: string;
   nickname: string;
   profileImageKey?: string | null;
-  gender?: Gender;
-  ageGroup?: AgeGroup;
+  gender: Gender;
+  ageGroup: AgeGroup;
   termsAgreed: boolean;
   privacyAgreed: boolean;
 };

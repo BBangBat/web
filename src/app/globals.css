@@ -457,10 +457,13 @@ h1, h2, h3, h4, h5, h6, strong, b { font-weight: 600; }
 .signup-field > small, .form-section > small { display: block; margin-top: 7px; color: var(--muted); font-size: .7rem; }
 .choice-grid { display: grid; gap: 8px; }
 .choice-grid-two { grid-template-columns: repeat(2,1fr); }
+.choice-grid-gender { grid-template-columns: repeat(3,1fr); }
 .choice-grid-age { grid-template-columns: repeat(3,1fr); }
+.choice-grid-age > button:last-child { grid-column: 1 / -1; }
 .choice-grid > button { display: grid; min-height: 44px; place-items: center; border: 1px solid #ddd5c8; border-radius: 11px; background: white; color: var(--ink); font-size: .78rem; }
 .choice-grid > button:hover { border-color: #d3b7a5; background: #fffaf6; }
 .choice-grid > button[data-selected="true"] { border-color: var(--orange); background: var(--orange-soft); color: var(--orange-dark); box-shadow: inset 0 0 0 1px var(--orange); font-weight: 600; }
+.signup-demographics-notice { margin: 12px 0 0; color: var(--muted); font-size: .7rem; line-height: 1.55; }
 .agreements { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--line); margin-top: 34px; padding-top: 25px; }
 .agreement-row { display: flex; min-height: 30px; align-items: center; gap: 8px; }
 .agreements label { display: flex; min-width: 0; flex: 1; align-items: center; color: var(--muted); font-size: .75rem; }

@@ -1,27 +1,103 @@
 import type { Metadata } from "next";
 import { AppChrome } from "@/components/layout/app-chrome";
+import {
+  SITE_DESCRIPTION,
+  SITE_EMAIL,
+  SITE_KEYWORDS,
+  SITE_NAME,
+  SITE_URL,
+} from "@/shared/config/site";
 import { Providers } from "./providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://www.bbangbat.com"),
-  title: "빵밭",
-  description: "대전 빵집의 혼잡도, 재고 소식, 빵명록을 실시간으로 만나는 빵지순례 지도",
-  applicationName: "빵밭",
-  keywords: ["대전 빵집", "빵지순례", "대전 여행", "빵지도", "실시간 혼잡도"],
+  metadataBase: new URL(SITE_URL),
+  title: SITE_NAME,
+  description: SITE_DESCRIPTION,
+  applicationName: SITE_NAME,
+  keywords: [...SITE_KEYWORDS],
+  creator: SITE_NAME,
+  publisher: SITE_NAME,
+  category: "travel",
+  alternates: {
+    canonical: "/",
+    languages: { "ko-KR": "/" },
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+      "max-video-preview": -1,
+    },
+  },
   openGraph: {
     type: "website",
     locale: "ko_KR",
-    siteName: "빵밭",
-    title: "빵밭",
-    description: "헛걸음 없는 대전 빵지순례를 시작하세요.",
+    url: SITE_URL,
+    siteName: SITE_NAME,
+    title: SITE_NAME,
+    description: SITE_DESCRIPTION,
   },
+  twitter: {
+    card: "summary_large_image",
+    title: SITE_NAME,
+    description: SITE_DESCRIPTION,
+  },
+};
+
+const structuredData = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": `${SITE_URL}/#organization`,
+      name: SITE_NAME,
+      url: SITE_URL,
+      email: SITE_EMAIL,
+      logo: {
+        "@type": "ImageObject",
+        url: `${SITE_URL}/icon.jpg`,
+      },
+    },
+    {
+      "@type": "WebSite",
+      "@id": `${SITE_URL}/#website`,
+      name: SITE_NAME,
+      url: SITE_URL,
+      description: SITE_DESCRIPTION,
+      inLanguage: "ko-KR",
+      publisher: { "@id": `${SITE_URL}/#organization` },
+    },
+    {
+      "@type": "WebApplication",
+      name: SITE_NAME,
+      url: SITE_URL,
+      description: SITE_DESCRIPTION,
+      applicationCategory: "TravelApplication",
+      operatingSystem: "Web",
+      inLanguage: "ko-KR",
+      areaServed: {
+        "@type": "City",
+        name: "대전광역시",
+      },
+    },
+  ],
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="ko">
       <body>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify(structuredData).replace(/</g, "\\u003c"),
+          }}
+        />
         <Providers>
           <AppChrome>{children}</AppChrome>
         </Providers>
