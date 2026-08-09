@@ -30,13 +30,15 @@ export default function OpenGraphImage() {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={`data:image/jpeg;base64,${iconData}`}
-            alt=""
-            width={96}
-            height={96}
-            style={{ borderRadius: 24 }}
+          <div
+            style={{
+              width: 96,
+              height: 96,
+              borderRadius: 24,
+              backgroundImage: `url(data:image/jpeg;base64,${iconData})`,
+              backgroundPosition: "center",
+              backgroundSize: "cover",
+            }}
           />
           <span style={{ fontSize: 56, letterSpacing: "-0.05em" }}>{SITE_NAME}</span>
         </div>
