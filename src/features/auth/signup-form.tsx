@@ -5,42 +5,37 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { ArrowLeft, Check, ChevronRight, UserRound, X } from "lucide-react";
 import { z } from "zod";
-import type { AgeGroup } from "@/entities/types";
+import type { AgeGroup, Gender } from "@/entities/types";
 import { useAuth } from "@/features/auth/auth-context";
 import { requestMapLoginModal } from "@/features/auth/login-handoff";
 import { PrivacyContent, TermsContent } from "@/features/legal/legal-content";
 import { bbangbatApi } from "@/shared/api/bbangbat-api";
+import { useNicknameAvailability } from "@/shared/hooks/use-nickname-availability";
+import { AGE_GROUP_OPTIONS, GENDER_OPTIONS } from "@/shared/lib/member-demographics";
 import { useFeedback } from "@/shared/ui/feedback-provider";
 import {
   isValidNickname,
   limitTextInput,
+  NICKNAME_ERROR_MESSAGE,
   NICKNAME_MAX_LENGTH,
 } from "@/shared/lib/text-input";
 
-const nicknameErrorMessage = "닉네임은 한글, 영문, 숫자만 2~10자로 입력해 주세요.";
-
 const signupSchema = z.object({
-  nickname: z.string().refine(isValidNickname, { message: nicknameErrorMessage }),
-  gender: z.enum(["MALE", "FEMALE"]).optional(),
-  ageGroup: z.enum(["TEENS", "TWENTIES", "THIRTIES", "FORTIES", "FIFTIES", "SIXTIES_PLUS"]).optional(),
+  nickname: z.string().refine(isValidNickname, { message: NICKNAME_ERROR_MESSAGE }),
+  gender: z.enum(["MALE", "FEMALE", "UNKNOWN"], { error: "성별을 선택해 주세요." }),
+  ageGroup: z.enum(
+    ["TEENS", "TWENTIES", "THIRTIES", "FORTIES", "FIFTIES", "SIXTIES_PLUS", "UNKNOWN"],
+    { error: "연령대를 선택해 주세요." },
+  ),
   termsAgreed: z.boolean().refine(Boolean, { message: "서비스 이용약관 동의가 필요해요." }),
   privacyAgreed: z.boolean().refine(Boolean, { message: "개인정보처리방침 동의가 필요해요." }),
 });
 
 type SignupFormValues = z.infer<typeof signupSchema>;
 type LegalDocument = "privacy" | "terms";
-
-const ageOptions: { value: AgeGroup; label: string }[] = [
-  { value: "TEENS", label: "10대" },
-  { value: "TWENTIES", label: "20대" },
-  { value: "THIRTIES", label: "30대" },
-  { value: "FORTIES", label: "40대" },
-  { value: "FIFTIES", label: "50대" },
-  { value: "SIXTIES_PLUS", label: "60대 이상" },
-];
 
 function SignupMapLink() {
   return (
@@ -54,15 +49,18 @@ function SignupMapLink() {
 export function SignupForm({
   tempToken,
   existingAccount,
+  initialGender,
+  initialAgeGroup,
 }: {
   tempToken: string;
   existingAccount: boolean;
+  initialGender?: Gender | null;
+  initialAgeGroup?: AgeGroup | null;
 }) {
   const router = useRouter();
   const { acceptAccessToken, consumeReturnTo } = useAuth();
   const { notify } = useFeedback();
   const [signupStep, setSignupStep] = useState<"account-check" | "form">("account-check");
-  const [debouncedNickname, setDebouncedNickname] = useState("");
   const [legalDocument, setLegalDocument] = useState<LegalDocument | null>(null);
   const legalTriggerRef = useRef<HTMLButtonElement | null>(null);
   const {
@@ -73,34 +71,22 @@ export function SignupForm({
     formState: { errors },
   } = useForm<SignupFormValues>({
     resolver: zodResolver(signupSchema),
-    defaultValues: { nickname: "", termsAgreed: false, privacyAgreed: false },
+    defaultValues: {
+      nickname: "",
+      ...(initialGender ? { gender: initialGender } : {}),
+      ...(initialAgeGroup ? { ageGroup: initialAgeGroup } : {}),
+      termsAgreed: false,
+      privacyAgreed: false,
+    },
   });
   const selectedGender = useWatch({ control, name: "gender" });
   const selectedAgeGroup = useWatch({ control, name: "ageGroup" });
   const nickname = useWatch({ control, name: "nickname" }) ?? "";
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedNickname(nickname), 350);
-    return () => window.clearTimeout(timer);
-  }, [nickname]);
-
-  const nicknameQuery = useQuery({
-    queryKey: ["nickname-availability", debouncedNickname],
-    queryFn: () => bbangbatApi.checkNickname(debouncedNickname),
-    enabled: signupStep === "form"
-      && debouncedNickname === nickname
-      && isValidNickname(debouncedNickname),
-    retry: false,
-    staleTime: 5 * 60_000,
-  });
-  const nicknameStatus = !isValidNickname(nickname)
-    ? "idle"
-    : debouncedNickname !== nickname || nicknameQuery.isFetching
-      ? "checking"
-      : nicknameQuery.isSuccess
-        ? nicknameQuery.data.available ? "available" : "taken"
-        : "idle";
-  const nicknamePatternInvalid = nickname.length > 0 && !isValidNickname(nickname);
+  const {
+    patternInvalid: nicknamePatternInvalid,
+    status: nicknameStatus,
+  } = useNicknameAvailability({ nickname, enabled: signupStep === "form" });
 
   const signupMutation = useMutation({
     mutationFn: async (values: SignupFormValues) => {
@@ -232,7 +218,7 @@ export function SignupForm({
               maxLength={NICKNAME_MAX_LENGTH}
               minLength={2}
               pattern="[가-힣A-Za-z0-9]{2,10}"
-              title={nicknameErrorMessage}
+              title={NICKNAME_ERROR_MESSAGE}
               aria-invalid={nicknamePatternInvalid || Boolean(errors.nickname) || nicknameStatus === "taken"}
               {...register("nickname", {
                 onChange: (event) => {
@@ -243,50 +229,50 @@ export function SignupForm({
             {nicknameStatus === "available" ? <Check aria-label="사용 가능" size={17} /> : null}
           </div>
           {nicknameStatus === "taken" ? <p className="field-error">이미 사용 중인 닉네임이에요.</p> : null}
-          {nicknamePatternInvalid ? <p className="field-error">{nicknameErrorMessage}</p> : null}
+          {nicknamePatternInvalid ? <p className="field-error">{NICKNAME_ERROR_MESSAGE}</p> : null}
           {!nicknamePatternInvalid && errors.nickname ? <p className="field-error">{errors.nickname.message}</p> : null}
         </label>
 
-        <fieldset className="signup-field">
-          <legend>성별</legend>
-          <div className="choice-grid choice-grid-two">
-            {([ ["FEMALE", "여성"], ["MALE", "남성"] ] as const).map(([value, label]) => (
+        <fieldset
+          className="signup-field"
+          aria-describedby={errors.gender ? "signup-gender-error" : undefined}
+        >
+          <legend>성별 <b className="required-mark" aria-label="필수">*</b></legend>
+          <div className="choice-grid choice-grid-gender">
+            {GENDER_OPTIONS.map(({ value, label }) => (
               <button
                 key={value}
                 type="button"
                 data-selected={selectedGender === value}
                 aria-pressed={selectedGender === value}
-                onClick={() => setValue(
-                  "gender",
-                  selectedGender === value ? undefined : value,
-                  { shouldDirty: true, shouldValidate: true },
-                )}
+                onClick={() => setValue("gender", value, { shouldDirty: true, shouldValidate: true })}
               >
                 {label}
               </button>
             ))}
           </div>
+          {errors.gender ? <p id="signup-gender-error" className="field-error">{errors.gender.message}</p> : null}
         </fieldset>
 
-        <fieldset className="signup-field">
-          <legend>연령대</legend>
+        <fieldset
+          className="signup-field"
+          aria-describedby={errors.ageGroup ? "signup-age-group-error" : undefined}
+        >
+          <legend>연령대 <b className="required-mark" aria-label="필수">*</b></legend>
           <div className="choice-grid choice-grid-age">
-            {ageOptions.map((option) => (
+            {AGE_GROUP_OPTIONS.map((option) => (
               <button
                 key={option.value}
                 type="button"
                 data-selected={selectedAgeGroup === option.value}
                 aria-pressed={selectedAgeGroup === option.value}
-                onClick={() => setValue(
-                  "ageGroup",
-                  selectedAgeGroup === option.value ? undefined : option.value,
-                  { shouldDirty: true, shouldValidate: true },
-                )}
+                onClick={() => setValue("ageGroup", option.value, { shouldDirty: true, shouldValidate: true })}
               >
                 {option.label}
               </button>
             ))}
           </div>
+          {errors.ageGroup ? <p id="signup-age-group-error" className="field-error">{errors.ageGroup.message}</p> : null}
         </fieldset>
 
         <div className="agreements">

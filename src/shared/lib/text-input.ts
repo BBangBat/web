@@ -8,6 +8,7 @@ export function textInputLength(value: string): number {
 
 export const NICKNAME_MIN_LENGTH = 2;
 export const NICKNAME_MAX_LENGTH = 10;
+export const NICKNAME_ERROR_MESSAGE = "닉네임은 한글, 영문, 숫자만 2~10자로 입력해 주세요.";
 export const NAME_MIN_LENGTH = 1;
 export const NAME_MAX_LENGTH = 30;
 

@@ -4,21 +4,22 @@ export function PrivacyContent() {
       <header className="legal-header">
         <h1 id="privacy-document-title">개인정보처리방침</h1>
         <p className="legal-meta">
-          <span>버전 1.0</span>
-          <span>시행일: 2026년 8월 7일</span>
+          <span>버전 1.1</span>
+          <span>시행일: 2026년 8월 9일</span>
         </p>
       </header>
 
       <section>
         <h2>1. 개인정보의 처리 목적</h2>
-        <p>회원 가입과 본인 식별, 나만의 빵지도·빵명록·실시간 톡 제공, 서비스 품질 개선과 부정 이용 방지를 위해 개인정보를 처리합니다.</p>
+        <p>회원 가입과 본인 식별, 나만의 빵지도·빵명록·실시간 톡 제공, 성별·연령대별 이용 통계 분석, 서비스 품질 개선과 부정 이용 방지를 위해 개인정보를 처리합니다.</p>
       </section>
 
       <section>
         <h2>2. 처리하는 개인정보 항목</h2>
         <ul>
           <li><strong>소셜 로그인</strong>: 소셜 계정 식별자, 이메일, 이름 또는 프로필 정보</li>
-          <li><strong>회원 정보</strong>: 닉네임, 프로필 이미지, 성별, 연령대</li>
+          <li><strong>회원 정보(필수)</strong>: 닉네임</li>
+          <li><strong>회원 정보(선택)</strong>: 프로필 이미지, 성별, 연령대(응답하지 않음 선택 가능)</li>
           <li><strong>서비스 이용</strong>: 즐겨찾기, 빵명록, 실시간 톡, 혼잡도 투표 및 이용 기록</li>
           <li><strong>위치 정보</strong>: 주변 빵집 조회와 가게 근처 참여 확인을 위해 이용자가 허용한 경우에만 처리</li>
           <li><strong>자동 생성 정보</strong>: 접속 기록, 기기·브라우저 정보, 쿠키 등 서비스 이용 기록</li>

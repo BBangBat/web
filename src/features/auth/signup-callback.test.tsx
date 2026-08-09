@@ -22,13 +22,19 @@ vi.mock("@/features/auth/signup-form", () => ({
   SignupForm: ({
     tempToken,
     existingAccount,
+    initialGender,
+    initialAgeGroup,
   }: {
     tempToken: string;
     existingAccount: boolean;
+    initialGender?: string | null;
+    initialAgeGroup?: string | null;
   }) => (
     <div>
       <span>{tempToken}</span>
       <span>{existingAccount ? "기존 계정" : "신규 계정"}</span>
+      <span>{initialGender ?? "성별 없음"}</span>
+      <span>{initialAgeGroup ?? "연령대 없음"}</span>
     </div>
   ),
 }));
@@ -45,6 +51,8 @@ describe("SignupCallback", () => {
       type: "SIGNUP",
       tempToken: "temporary-signup-token",
       existingAccount: true,
+      gender: "FEMALE",
+      ageGroup: "TWENTIES",
     });
     window.history.replaceState(null, "", "/signup?code=one-time-signup-code");
 
@@ -52,6 +60,8 @@ describe("SignupCallback", () => {
 
     expect(await screen.findByText("temporary-signup-token")).toBeInTheDocument();
     expect(screen.getByText("기존 계정")).toBeInTheDocument();
+    expect(screen.getByText("FEMALE")).toBeInTheDocument();
+    expect(screen.getByText("TWENTIES")).toBeInTheDocument();
     expect(mocks.exchangeOAuthCode).toHaveBeenCalledTimes(1);
     expect(mocks.exchangeOAuthCode).toHaveBeenCalledWith("one-time-signup-code");
     expect(window.location.search).toBe("");

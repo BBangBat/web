@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import type { AgeGroup, Gender } from "@/entities/types";
 import { requestMapLoginModal } from "@/features/auth/login-handoff";
 import { SignupForm } from "@/features/auth/signup-form";
 import { bbangbatApi } from "@/shared/api/bbangbat-api";
@@ -12,6 +13,8 @@ import { LoadingState } from "@/shared/ui/states";
 type SignupExchange = {
   tempToken: string;
   existingAccount: boolean;
+  gender: Gender | null;
+  ageGroup: AgeGroup | null;
 };
 
 export function SignupCallback({ code }: { code: string | null }) {
@@ -44,6 +47,8 @@ export function SignupCallback({ code }: { code: string | null }) {
         setExchange({
           tempToken: result.tempToken,
           existingAccount: result.existingAccount,
+          gender: result.gender ?? null,
+          ageGroup: result.ageGroup ?? null,
         });
       })
       .catch((exchangeError: unknown) => {
@@ -62,6 +67,8 @@ export function SignupCallback({ code }: { code: string | null }) {
     <SignupForm
       tempToken={exchange.tempToken}
       existingAccount={exchange.existingAccount}
+      initialGender={exchange.gender}
+      initialAgeGroup={exchange.ageGroup}
     />
   );
 }

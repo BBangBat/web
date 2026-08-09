@@ -1,10 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SignupForm } from "@/features/auth/signup-form";
 
 const mocks = vi.hoisted(() => ({
   checkNickname: vi.fn(),
+  signup: vi.fn(),
+  acceptAccessToken: vi.fn(),
   replace: vi.fn(),
   notify: vi.fn(),
 }));
@@ -14,7 +16,7 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("@/features/auth/auth-context", () => ({
   useAuth: () => ({
-    acceptAccessToken: vi.fn(),
+    acceptAccessToken: mocks.acceptAccessToken,
     consumeReturnTo: () => "/",
   }),
 }));
@@ -23,17 +25,28 @@ vi.mock("@/shared/ui/feedback-provider", () => ({
 }));
 vi.mock("@/shared/api/bbangbat-api", () => ({
   bbangbatApi: {
-    signup: vi.fn(),
+    signup: mocks.signup,
     linkAccount: vi.fn(),
     checkNickname: mocks.checkNickname,
   },
 }));
 
-function renderSignup() {
+function renderSignup({
+  initialGender,
+  initialAgeGroup,
+}: {
+  initialGender?: "MALE" | "FEMALE" | "UNKNOWN" | null;
+  initialAgeGroup?: "TEENS" | "TWENTIES" | "THIRTIES" | "FORTIES" | "FIFTIES" | "SIXTIES_PLUS" | "UNKNOWN" | null;
+} = {}) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <SignupForm tempToken="temporary-token" existingAccount={false} />
+      <SignupForm
+        tempToken="temporary-token"
+        existingAccount={false}
+        initialGender={initialGender}
+        initialAgeGroup={initialAgeGroup}
+      />
     </QueryClientProvider>,
   );
 }
@@ -43,6 +56,8 @@ describe("SignupForm", () => {
     vi.clearAllMocks();
     sessionStorage.clear();
     mocks.checkNickname.mockResolvedValue({ available: true });
+    mocks.signup.mockResolvedValue({ accessToken: "signup-access-token" });
+    mocks.acceptAccessToken.mockResolvedValue(undefined);
   });
 
   it("신규 회원에게 기존 계정 여부를 먼저 확인한다", () => {
@@ -69,26 +84,55 @@ describe("SignupForm", () => {
     expect(screen.getByText(/처리하는 개인정보 항목/)).toBeInTheDocument();
   });
 
-  it("성별과 연령대는 다시 누르면 선택이 해제되는 선택 항목으로 제공한다", () => {
-    renderSignup();
+  it("소셜 성별과 연령대를 초기 선택으로 보여주고 응답하지 않음도 제공한다", () => {
+    renderSignup({ initialGender: "FEMALE", initialAgeGroup: "TWENTIES" });
     fireEvent.click(screen.getByRole("button", { name: "새로 가입하기" }));
 
     const femaleButton = screen.getByRole("button", { name: "여성" });
-    const sixtiesButton = screen.getByRole("button", { name: "60대 이상" });
+    const twentiesButton = screen.getByRole("button", { name: "20대" });
+    const unknownButtons = screen.getAllByRole("button", { name: "응답하지 않음" });
     expect(screen.getByRole("heading", { name: "회원가입" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: /닉네임/ })).toBeRequired();
-    expect(femaleButton).toHaveAttribute("aria-pressed", "false");
-    expect(sixtiesButton).toHaveAttribute("aria-pressed", "false");
-
-    fireEvent.click(femaleButton);
-    fireEvent.click(sixtiesButton);
     expect(femaleButton).toHaveAttribute("aria-pressed", "true");
-    expect(sixtiesButton).toHaveAttribute("aria-pressed", "true");
+    expect(twentiesButton).toHaveAttribute("aria-pressed", "true");
+    expect(unknownButtons).toHaveLength(2);
+    expect(unknownButtons[0]).toHaveAttribute("aria-pressed", "false");
+    expect(unknownButtons[1]).toHaveAttribute("aria-pressed", "false");
+  });
 
-    fireEvent.click(femaleButton);
-    fireEvent.click(sixtiesButton);
-    expect(femaleButton).toHaveAttribute("aria-pressed", "false");
-    expect(sixtiesButton).toHaveAttribute("aria-pressed", "false");
+  it("소셜 값이 없으면 성별과 연령대를 미리 선택하지 않고 직접 선택하게 한다", async () => {
+    renderSignup();
+    fireEvent.click(screen.getByRole("button", { name: "새로 가입하기" }));
+
+    const unknownButtons = screen.getAllByRole("button", { name: "응답하지 않음" });
+    expect(unknownButtons[0]).toHaveAttribute("aria-pressed", "false");
+    expect(unknownButtons[1]).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.submit(screen.getByRole("button", { name: "빵밭 시작하기" }).closest("form")!);
+    expect(await screen.findByText("성별을 선택해 주세요.")).toBeInTheDocument();
+    expect(screen.getByText("연령대를 선택해 주세요.")).toBeInTheDocument();
+  });
+
+  it("소셜 초기값보다 회원가입 화면에서 바꾼 값을 우선해 전송한다", async () => {
+    renderSignup({ initialGender: "FEMALE", initialAgeGroup: "TWENTIES" });
+    fireEvent.click(screen.getByRole("button", { name: "새로 가입하기" }));
+
+    fireEvent.change(screen.getByRole("textbox", { name: /닉네임/ }), { target: { value: "빵친구" } });
+    fireEvent.click(screen.getByRole("button", { name: "남성" }));
+    fireEvent.click(screen.getByRole("button", { name: "30대" }));
+    screen.getAllByRole("checkbox").forEach((checkbox) => fireEvent.click(checkbox));
+
+    await screen.findByLabelText("사용 가능");
+    fireEvent.click(screen.getByRole("button", { name: "빵밭 시작하기" }));
+
+    await waitFor(() => expect(mocks.signup).toHaveBeenCalledWith({
+      tempToken: "temporary-token",
+      nickname: "빵친구",
+      gender: "MALE",
+      ageGroup: "THIRTIES",
+      termsAgreed: true,
+      privacyAgreed: true,
+    }));
   });
 
   it("닉네임 입력 중 포커스를 유지한 채 사용 가능 여부를 자동 확인한다", async () => {
