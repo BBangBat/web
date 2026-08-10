@@ -693,13 +693,22 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
                   {!reviewsQuery.isLoading && (reviewsQuery.isError || recentReviews.length === 0) ? <p className="mypage-overview-empty">아직 남긴 빵명록이 없어요.</p> : null}
                   <div className="mypage-overview-list">
                     {recentReviews.map((review) => (
-                      <Link
-                        key={review.id}
-                        href={reviewMapHref(review.storeId, review.id)}
-                        className="mypage-review-preview"
-                      >
-                        <MypageReviewCardContent review={review} compact />
-                      </Link>
+                      <article key={review.id} className="mypage-review-preview-card">
+                        <Link
+                          href={reviewMapHref(review.storeId, review.id)}
+                          className="mypage-review-preview"
+                        >
+                          <MypageReviewCardContent review={review} compact />
+                        </Link>
+                        <button
+                          type="button"
+                          className="my-review-delete"
+                          onClick={(event) => requestReviewDeletion(review, event.currentTarget)}
+                          disabled={deleteMutation.isPending}
+                        >
+                          삭제
+                        </button>
+                      </article>
                     ))}
                   </div>
                 </section>
@@ -988,7 +997,8 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
             className="profile-modal"
             role="dialog"
             aria-modal="true"
-            aria-labelledby="profile-modal-title"
+            aria-labelledby={profileModal === "avatar-preview" ? undefined : "profile-modal-title"}
+            aria-label={profileModal === "avatar-preview" ? "프로필 사진 확대 보기" : undefined}
             data-kind={profileModal}
           >
             {profileModal !== "withdraw" ? (
@@ -1057,10 +1067,7 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
               </>
             ) : null}
             {profileModal === "avatar-preview" ? (
-              <>
-                <h2 id="profile-modal-title">프로필 사진</h2>
-                <MemberAvatar imageUrl={member?.profileImageUrl} className="profile-avatar-preview" />
-              </>
+              <MemberAvatar imageUrl={member?.profileImageUrl} className="profile-avatar-preview" />
             ) : null}
             {profileModal === "demographics" ? (
               <>

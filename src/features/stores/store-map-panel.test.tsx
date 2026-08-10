@@ -8,11 +8,11 @@ describe("RefreshStatus", () => {
     vi.useRealTimers();
   });
 
-  it("Strict Mode에서 초기 회전이 끝난 뒤 다시 클릭할 수 있다", () => {
+  it("최소 회전 시간이 지나도 조회 중이면 비활성화하고 조회가 끝나면 다시 클릭할 수 있다", () => {
     vi.useFakeTimers();
     const onRefresh = vi.fn();
 
-    render(
+    const { rerender } = render(
       <StrictMode>
         <RefreshStatus label="실시간 톡" updatedAt={Date.now()} isFetching onRefresh={onRefresh} />
       </StrictMode>,
@@ -22,6 +22,13 @@ describe("RefreshStatus", () => {
     expect(button).toBeDisabled();
 
     act(() => vi.advanceTimersByTime(800));
+    expect(button).toBeDisabled();
+
+    rerender(
+      <StrictMode>
+        <RefreshStatus label="실시간 톡" updatedAt={Date.now()} isFetching={false} onRefresh={onRefresh} />
+      </StrictMode>,
+    );
     expect(button).toBeEnabled();
 
     fireEvent.click(button);

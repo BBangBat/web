@@ -20,6 +20,7 @@ import {
   optimisticallySetFavorite,
   rollbackFavoriteCache,
 } from "@/features/favorites/favorite-cache";
+import { shouldPreserveSelectedCardOnDetailClose } from "@/features/home/home-navigation";
 import { BakeryMap, type MapViewport } from "@/features/map/bakery-map";
 import { StoreCard } from "@/features/stores/store-card";
 import { StoreMapPanel } from "@/features/stores/store-map-panel";
@@ -75,6 +76,9 @@ export function HomeScreen({
   const initialStoreFocusRef = useRef(false);
   const initialAreaViewportRef = useRef<MapViewport | null>(null);
   const mobileSearchSelectionRef = useRef(false);
+  const preserveSelectedCardOnCloseRef = useRef(
+    Boolean(initialStoreId && initialDetailPlacement === "sidebar"),
+  );
   const deferredQuery = useDeferredValue(query.trim());
 
   const storesQuery = useQuery({
@@ -124,6 +128,11 @@ export function HomeScreen({
     [favoriteStores, nearbyStores],
   );
   const activeStoreIds = useMemo(() => activeStores.map((store) => store.id), [activeStores]);
+  const summaryStoreIds = useMemo(() => {
+    const storeIds = new Set(activeStoreIds);
+    if (selectedStoreId) storeIds.add(selectedStoreId);
+    return [...storeIds];
+  }, [activeStoreIds, selectedStoreId]);
   const congestionStoreIds = useMemo(() => {
     const storeIds = new Set(allKnownStores.map((store) => store.id));
     if (selectedStoreId) storeIds.add(selectedStoreId);
@@ -137,9 +146,9 @@ export function HomeScreen({
     refetchInterval: 60_000,
   });
   const summariesQuery = useQuery({
-    queryKey: ["talk-summaries", activeStoreIds],
-    queryFn: () => bbangbatApi.getTalkSummaries(activeStoreIds),
-    enabled: activeStoreIds.length > 0,
+    queryKey: ["talk-summaries", summaryStoreIds],
+    queryFn: () => bbangbatApi.getTalkSummaries(summaryStoreIds),
+    enabled: summaryStoreIds.length > 0,
     refetchInterval: 60_000,
   });
   const searchQuery = useQuery({
@@ -292,6 +301,7 @@ export function HomeScreen({
   }
 
   async function locateUser() {
+    preserveSelectedCardOnCloseRef.current = false;
     updateSelectedStoreId(null);
     setSearchedStore(null);
     mobileSearchSelectionRef.current = false;
@@ -327,6 +337,7 @@ export function HomeScreen({
   }
 
   function selectStore(storeId: number) {
+    preserveSelectedCardOnCloseRef.current = false;
     setSearchedStore(null);
     mobileSearchSelectionRef.current = false;
     updateSelectedStoreId(storeId, "floating");
@@ -336,6 +347,7 @@ export function HomeScreen({
   }
 
   function selectMapStore(storeId: number) {
+    preserveSelectedCardOnCloseRef.current = false;
     const isMobile = window.matchMedia("(max-width: 900px)").matches;
     if (isMobile) {
       setSelectedStoreId(storeId);
@@ -362,6 +374,7 @@ export function HomeScreen({
         queryFn: () => bbangbatApi.getStore(storeId),
       });
       const isMobile = window.matchMedia("(max-width: 900px)").matches;
+      preserveSelectedCardOnCloseRef.current = false;
       if (isMobile) {
         setActiveTab("nearby");
         setSearchedStore(store);
@@ -390,6 +403,25 @@ export function HomeScreen({
   }
 
   function closeSelectedStoreDetail() {
+    const shouldPreserveSelectedCard = shouldPreserveSelectedCardOnDetailClose({
+      isMobile: window.matchMedia("(max-width: 900px)").matches,
+      preserveSelectedCard: preserveSelectedCardOnCloseRef.current,
+      selectedStoreId,
+      initialStoreId,
+    });
+
+    if (shouldPreserveSelectedCard) {
+      setPendingInitialReviewId(null);
+      setDetailOpen(false);
+      setSheetSnap("collapsed");
+      const url = new URL(window.location.href);
+      url.searchParams.delete("storeId");
+      url.searchParams.delete("detail");
+      url.searchParams.delete("reviewId");
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      return;
+    }
+
     updateSelectedStoreId(null);
     setSheetSnap("collapsed");
     if (!mobileSearchSelectionRef.current) return;
@@ -405,6 +437,7 @@ export function HomeScreen({
   }
 
   function searchCurrentArea(searchViewport?: MapViewport) {
+    preserveSelectedCardOnCloseRef.current = false;
     setActiveTab("nearby");
     setSearchedStore(null);
     mobileSearchSelectionRef.current = false;
@@ -432,6 +465,7 @@ export function HomeScreen({
   }
 
   function changeTab(tab: SidebarTab) {
+    preserveSelectedCardOnCloseRef.current = false;
     setActiveTab(tab);
     setSearchedStore(null);
     mobileSearchSelectionRef.current = false;
