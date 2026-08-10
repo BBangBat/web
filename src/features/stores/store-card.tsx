@@ -71,7 +71,7 @@ export function StoreCard({
             {selectContent}
           </button>
         ) : (
-          <Link href={`/stores/${store.id}`} className="store-card-select">
+          <Link href={`/?storeId=${store.id}&detail=sidebar`} className="store-card-select">
             {selectContent}
           </Link>
         )}
@@ -158,5 +158,5 @@ export function StoreCard({
     );
   }
 
-  return <Link href={`/stores/${store.id}`} className={className}>{content}</Link>;
+  return <Link href={`/?storeId=${store.id}&detail=sidebar`} className={className}>{content}</Link>;
 }

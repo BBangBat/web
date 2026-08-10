@@ -10,7 +10,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useRouter } from "next/navigation";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsFetching, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   Check,
@@ -94,7 +94,7 @@ export function RefreshStatus({ label, updatedAt, isFetching, onRefresh }: Refre
     spinLockRef.current = false;
   }, []);
 
-  const spinning = minimumSpin;
+  const spinning = minimumSpin || isFetching;
 
   function refresh() {
     if (!startMinimumSpin()) return;
@@ -221,7 +221,7 @@ export function ReviewPhotoGallery({ imageUrls }: { imageUrls: string[] }) {
 }
 
 export function StoreMapPanel({
-  store,
+  store: storeSnapshot,
   congestion,
   summary,
   placement = "floating",
@@ -239,10 +239,19 @@ export function StoreMapPanel({
     initialReviewId ? "reviews" : "live",
   );
   const [voteCooldownMinutes, setVoteCooldownMinutes] = useState(0);
+  const [isPanelRefreshing, setIsPanelRefreshing] = useState(false);
   const talkListRef = useRef<HTMLDivElement>(null);
   const panelContentRef = useRef<HTMLDivElement>(null);
   const reviewFocusHandledRef = useRef(false);
   const voteCooldownExpiryRef = useRef(0);
+
+  const storeQuery = useQuery({
+    queryKey: ["store", storeSnapshot.id],
+    queryFn: () => bbangbatApi.getStore(storeSnapshot.id),
+    initialData: storeSnapshot,
+    refetchInterval: 5 * 60_000,
+  });
+  const store = storeQuery.data ?? storeSnapshot;
 
   useEffect(() => {
     const storageKey = congestionVoteCooldownStorageKey(store.id);
@@ -296,12 +305,28 @@ export function StoreMapPanel({
   const reviewsQuery = useQuery({
     queryKey: ["reviews", store.id],
     queryFn: () => bbangbatApi.getReviews(store.id),
+    refetchInterval: 60_000,
   });
   const favoritesQuery = useQuery({
     queryKey: ["favorites", memberId],
     queryFn: () => bbangbatApi.getFavorites(accessToken!),
     enabled: Boolean(accessToken && memberId),
   });
+  const summaryFetchingCount = useIsFetching({ queryKey: ["talk-summaries"] });
+  const panelUpdatedAt = Math.max(
+    storeQuery.dataUpdatedAt,
+    congestionQuery.dataUpdatedAt,
+    talksQuery.dataUpdatedAt,
+    reviewsQuery.dataUpdatedAt,
+    favoritesQuery.dataUpdatedAt,
+  );
+  const panelIsFetching = isPanelRefreshing
+    || storeQuery.isFetching
+    || congestionQuery.isFetching
+    || talksQuery.isFetching
+    || reviewsQuery.isFetching
+    || favoritesQuery.isFetching
+    || summaryFetchingCount > 0;
 
   const currentCongestion = congestionQuery.data ?? congestion;
   const currentLevel = currentCongestion?.current ?? "UNCROWDED";
@@ -424,7 +449,7 @@ export function StoreMapPanel({
         return;
       }
       if (error instanceof ApiError && error.code === "OUT_OF_SERVICE_AREA") {
-        notify("대전 서비스 지역 안에서만 투표할 수 있어요.", "info");
+        notify("대전 지역에서만 투표할 수 있어요.", "info");
         return;
       }
       if (!accessToken && error instanceof ApiError && error.status === 401) {
@@ -490,6 +515,24 @@ export function StoreMapPanel({
   function selectPanelTab(tab: StorePanelTab) {
     setActivePanelTab(tab);
     if (panelContentRef.current) panelContentRef.current.scrollTop = 0;
+  }
+
+  async function refreshPanel() {
+    if (isPanelRefreshing) return;
+    setIsPanelRefreshing(true);
+    try {
+      await Promise.all([
+        storeQuery.refetch(),
+        congestionQuery.refetch(),
+        talksQuery.refetch(),
+        reviewsQuery.refetch(),
+        accessToken && memberId ? favoritesQuery.refetch() : Promise.resolve(),
+        queryClient.refetchQueries({ queryKey: ["talk-summaries"], type: "active" }),
+        queryClient.refetchQueries({ queryKey: ["congestions"], type: "active" }),
+      ]);
+    } finally {
+      setIsPanelRefreshing(false);
+    }
   }
 
   async function copyStoreFact(label: "주소" | "전화번호", value: string) {
@@ -619,18 +662,16 @@ export function StoreMapPanel({
               <div className="map-panel-section-title">
                 <h3>실시간 톡</h3>
                 <RefreshStatus
-                  label="실시간 톡"
-                  updatedAt={talksQuery.dataUpdatedAt}
-                  isFetching={talksQuery.isFetching}
-                  onRefresh={() => void talksQuery.refetch()}
+                  label="가게 상세 정보"
+                  updatedAt={panelUpdatedAt}
+                  isFetching={panelIsFetching}
+                  onRefresh={() => void refreshPanel()}
                 />
               </div>
-              {summary ? (
-                <div className="map-store-live">
-                  <div><MessageCircleMore aria-hidden="true" size={16} /><strong>AI 요약</strong></div>
-                  <p>{summary.summary}</p>
-                </div>
-              ) : null}
+              <div className="map-store-live" data-empty={!summary}>
+                <div><MessageCircleMore aria-hidden="true" size={16} /><strong>AI 요약</strong></div>
+                <p>{summary?.summary ?? "요약 중입니다."}</p>
+              </div>
               <div
                 ref={talkListRef}
                 className="map-panel-talk-list"
