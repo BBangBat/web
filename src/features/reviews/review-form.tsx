@@ -6,10 +6,10 @@ import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Camera, ChevronLeft, ChevronRight, Star, X } from "lucide-react";
-import { z } from "zod";
 import type { Review } from "@/entities/types";
 import { useAuth } from "@/features/auth/auth-context";
 import { useLoginModal } from "@/features/auth/login-modal";
+import { reviewSchema, type ReviewFormValues } from "@/features/reviews/review-form-validation";
 import { bbangbatApi } from "@/shared/api/bbangbat-api";
 import { featureFlags } from "@/shared/config/features";
 import { moveReviewImage } from "@/shared/lib/review-images";
@@ -17,17 +17,6 @@ import { mergeReviewMenus } from "@/shared/lib/review-menus";
 import { limitTextInput, textInputLength } from "@/shared/lib/text-input";
 import { useFeedback } from "@/shared/ui/feedback-provider";
 
-const reviewSchema = z.object({
-  rating: z.number().min(1, "별점을 선택해 주세요.").max(5),
-  menus: z.array(z.string().trim().min(1)).min(1, "구매한 메뉴를 입력해 주세요."),
-  content: z
-    .string()
-    .trim()
-    .refine((value) => textInputLength(value) >= 10, "후기는 10자 이상 입력해 주세요.")
-    .refine((value) => textInputLength(value) <= 500, "후기는 500자까지 입력할 수 있어요."),
-});
-
-type ReviewFormValues = z.infer<typeof reviewSchema>;
 const supportedImageTypes = ["image/jpeg", "image/png", "image/webp", "image/heic"];
 
 export function ReviewForm({ storeId }: { storeId: number }) {
@@ -51,9 +40,10 @@ export function ReviewForm({ storeId }: { storeId: number }) {
     handleSubmit,
     setValue,
     control,
-    formState: { errors },
+    formState: { errors, isValid },
   } = useForm<ReviewFormValues>({
     resolver: zodResolver(reviewSchema),
+    mode: "onChange",
     defaultValues: { rating: 0, menus: [], content: "" },
   });
   const rating = useWatch({ control, name: "rating" });
@@ -146,7 +136,7 @@ export function ReviewForm({ storeId }: { storeId: number }) {
     const nextMenus = mergeReviewMenus(menus, candidates);
     setValue("menus", nextMenus, {
       shouldDirty: true,
-      shouldValidate: Boolean(errors.menus),
+      shouldValidate: true,
     });
   }
 
@@ -159,7 +149,7 @@ export function ReviewForm({ storeId }: { storeId: number }) {
   function removeMenu(menuToRemove: string) {
     setValue("menus", menus.filter((menu) => menu !== menuToRemove), {
       shouldDirty: true,
-      shouldValidate: Boolean(errors.menus),
+      shouldValidate: true,
     });
   }
 
@@ -324,7 +314,7 @@ export function ReviewForm({ storeId }: { storeId: number }) {
             onChange={(event) => {
               setValue("content", limitTextInput(event.currentTarget.value, 500), {
                 shouldDirty: true,
-                shouldValidate: Boolean(errors.content),
+                shouldValidate: true,
               });
             }}
           />
@@ -334,7 +324,11 @@ export function ReviewForm({ storeId }: { storeId: number }) {
           </div>
         </div>
 
-        <button type="submit" className="button button-primary submit-button" disabled={createMutation.isPending || status === "initializing"}>
+        <button
+          type="submit"
+          className="button button-primary submit-button"
+          disabled={!isValid || createMutation.isPending || status === "initializing"}
+        >
           {createMutation.isPending ? "사진과 기록을 저장하는 중…" : "빵명록 등록하기"}
         </button>
       </form>
