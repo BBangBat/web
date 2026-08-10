@@ -404,6 +404,7 @@ h1, h2, h3, h4, h5, h6, strong, b { font-weight: 600; }
 .agreements b { margin-right: 4px; color: var(--orange); }
 .agreement-document-button { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 8px; background: transparent; color: var(--muted); }
 .submit-button { width: 100%; margin-top: 28px; }
+.review-form .submit-button:disabled { background: #e8e3dc; color: #a49b90; }
 .account-link-card { display: flex; width: min(100% - 40px, 460px); flex-direction: column; align-items: center; gap: 14px; border: 1px solid var(--line); border-radius: 24px; background: var(--surface); box-shadow: var(--shadow); margin: 70px auto; text-align: center; padding: 42px 32px; }
 .account-link-card > svg { color: var(--green); }
 .account-link-card h1 { margin: 2px 0 0; font-size: 1.55rem; }
