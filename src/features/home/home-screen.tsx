@@ -21,7 +21,7 @@ import {
   rollbackFavoriteCache,
 } from "@/features/favorites/favorite-cache";
 import { shouldPreserveSelectedCardOnDetailClose } from "@/features/home/home-navigation";
-import { BakeryMap, type MapViewport } from "@/features/map/bakery-map";
+import { BakeryMap, INITIAL_MAP_LEVEL, type MapViewport } from "@/features/map/bakery-map";
 import { StoreCard } from "@/features/stores/store-card";
 import { StoreMapPanel } from "@/features/stores/store-map-panel";
 import { bbangbatApi } from "@/shared/api/bbangbat-api";
@@ -60,7 +60,7 @@ export function HomeScreen({
   const [mapFocus, setMapFocus] = useState({
     id: 0,
     center: DEFAULT_LOCATION,
-    level: 5,
+    level: INITIAL_MAP_LEVEL,
     offsetForPanel: false,
     preserveLevel: false,
   });
@@ -616,7 +616,7 @@ export function HomeScreen({
             ) : null}
             {visibleStores.map((store) => (
               <StoreCard
-                dense
+                explore
                 key={store.id}
                 store={store}
                 location={location}

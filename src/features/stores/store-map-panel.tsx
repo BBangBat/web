@@ -550,7 +550,7 @@ export function StoreMapPanel({
         <div className="map-store-toolbar">
           <div className="map-store-toolbar-main">
             <button type="button" className="map-store-back" onClick={onClose} aria-label="목록으로 돌아가기">
-              <ArrowLeft aria-hidden="true" size={21} />
+              <ArrowLeft aria-hidden="true" size={22} />
             </button>
             <div className="map-store-toolbar-title">
               <h2>{store.name}</h2>
@@ -569,7 +569,7 @@ export function StoreMapPanel({
               disabled={favoriteMutation.isPending}
               onClick={toggleFavorite}
             >
-              <Heart aria-hidden="true" size={20} fill={isFavorite ? "currentColor" : "none"} />
+              <Heart aria-hidden="true" size={22} fill={isFavorite ? "currentColor" : "none"} />
             </button>
           </div>
         </div>

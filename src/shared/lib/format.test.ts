@@ -3,6 +3,7 @@ import {
   averageRating,
   compactReviewDate,
   compactAddress,
+  compactDaejeonAddress,
   distanceInKm,
   hasStoreImage,
   isSafeInternalPath,
@@ -23,6 +24,14 @@ describe("format helpers", () => {
     expect(compactAddress("대전광역시 서구 둔산로 1 (1층 둔산동)")).toBe(
       "대전광역시 서구 둔산로 1",
     );
+  });
+
+  it.each([
+    ["대전광역시 서구 둔산로 1 (1층 둔산동)", "서구 둔산로 1 (1층 둔산동)"],
+    ["대전시 중구 중앙로 1", "중구 중앙로 1"],
+    ["대전 유성구 대학로 1", "유성구 대학로 1"],
+  ])("removes the Daejeon prefix from a store card address", (address, expected) => {
+    expect(compactDaejeonAddress(address)).toBe(expected);
   });
 
   it("calculates an average rating", () => {

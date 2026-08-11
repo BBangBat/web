@@ -48,12 +48,7 @@ import {
   GENDER_LABEL,
   GENDER_OPTIONS,
 } from "@/shared/lib/member-demographics";
-import {
-  compactReviewDate,
-  compactAddress,
-  congestionCopy,
-  hasStoreImage,
-} from "@/shared/lib/format";
+import { compactReviewDate } from "@/shared/lib/format";
 import {
   isValidName,
   isValidNickname,
@@ -721,46 +716,19 @@ export function MypageScreen({ initialTab }: { initialTab: MypageTab }) {
                   {favoriteIdsQuery.isLoading || favoriteStoresQuery.isLoading ? <LoadingState label="나만의 빵지도를 불러오는 중" /> : null}
                   {!favoriteIdsQuery.isLoading && !favoriteStoresQuery.isLoading && (favoriteIdsQuery.isError || favoriteStoresQuery.isError || favoriteStoresQuery.data?.length === 0) ? <p className="mypage-overview-empty">아직 저장한 빵집이 없어요.</p> : null}
                   <div className="mypage-overview-list">
-                    {favoriteStoresQuery.data?.slice(0, 5).map((store) => {
-                      const congestion = favoriteCongestionByStore.get(store.id);
-                      return (
-                        <article key={store.id} className="mypage-favorite-preview">
-                          <button
-                            type="button"
-                            className="mypage-favorite-preview-select"
-                            onClick={() => router.push(`/?storeId=${store.id}&detail=sidebar`)}
-                          >
-                          <div
-                            className="mypage-preview-thumbnail"
-                            style={hasStoreImage(store.imageUrl) ? { backgroundImage: `url(${store.imageUrl})` } : undefined}
-                            aria-hidden="true"
-                          />
-                          <div className="mypage-favorite-preview-copy">
-                            <strong>{store.name}</strong>
-                            <p>{compactAddress(store.address)}</p>
-                          </div>
-                          </button>
-                          <div className="mypage-favorite-preview-actions">
-                            {congestion ? (
-                              <span className={`mypage-preview-congestion congestion-${congestion.current.toLowerCase()}`}>
-                                <i aria-hidden="true" />
-                                {congestionCopy[congestion.current].shortLabel}
-                              </span>
-                            ) : <span className="mypage-preview-congestion-loading">확인 중</span>}
-                            <button
-                              type="button"
-                              className="mypage-favorite-remove"
-                              aria-label={`${store.name} 즐겨찾기 해제`}
-                              aria-pressed="true"
-                              disabled={favoriteMutation.isPending && favoriteMutation.variables?.id === store.id}
-                              onClick={() => favoriteMutation.mutate(store)}
-                            >
-                              <Heart aria-hidden="true" size={17} fill="currentColor" />
-                            </button>
-                          </div>
-                        </article>
-                      );
-                    })}
+                    {favoriteStoresQuery.data?.slice(0, 5).map((store) => (
+                      <StoreCard
+                        key={store.id}
+                        dense
+                        store={store}
+                        congestion={favoriteCongestionByStore.get(store.id)}
+                        showCongestion
+                        onSelect={(storeId) => router.push(`/?storeId=${storeId}&detail=sidebar`)}
+                        isFavorite
+                        favoritePending={favoriteMutation.isPending && favoriteMutation.variables?.id === store.id}
+                        onToggleFavorite={() => favoriteMutation.mutate(store)}
+                      />
+                    ))}
                   </div>
                 </section>
               </div>

@@ -2,11 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { CustomOverlayMap, Map, useKakaoLoader } from "react-kakao-maps-sdk";
-import { Crosshair, Minus, Plus, Search, Wheat } from "lucide-react";
+import { Croissant, Crosshair, Minus, Plus, Search } from "lucide-react";
 import type { Congestion, Coordinates, Store } from "@/entities/types";
 import { env } from "@/shared/config/env";
 import { congestionCopy, DAEJEON_BOUNDS, DEFAULT_LOCATION } from "@/shared/lib/format";
 import type { LocationStatus } from "@/shared/hooks/use-geolocation";
+import { resolveSearchAreaPixels } from "@/features/map/map-search-area";
+
+export const INITIAL_MAP_LEVEL = 5;
 
 type MapFocusRequest = {
   id: number;
@@ -65,6 +68,8 @@ function KakaoMapCanvas(props: BakeryMapProps) {
   });
   const mapRef = useRef<kakao.maps.Map | null>(null);
   const mapWrapRef = useRef<HTMLDivElement>(null);
+  const mapControlStackRef = useRef<HTMLDivElement>(null);
+  const searchHereButtonRef = useRef<HTMLButtonElement>(null);
   const initialViewportFrameRef = useRef<number | null>(null);
   const mapMovementFrameRef = useRef<number | null>(null);
   const mapMovementActiveRef = useRef(false);
@@ -76,7 +81,7 @@ function KakaoMapCanvas(props: BakeryMapProps) {
     startY: number;
     moved: boolean;
   } | null>(null);
-  const [mapLevel, setMapLevel] = useState(5);
+  const [mapLevel, setMapLevel] = useState(INITIAL_MAP_LEVEL);
   const [maximumLevel, setMaximumLevel] = useState(7);
   const showStoreNames = mapLevel <= 5;
   const markerOffsetByStore = useMemo(() => {
@@ -270,14 +275,27 @@ function KakaoMapCanvas(props: BakeryMapProps) {
     map.setLevel(map.getLevel() + 1);
   }
 
-  function getSearchViewport(map: kakao.maps.Map): MapViewport {
+  function getSearchViewport(map: kakao.maps.Map, restrictToControls = false): MapViewport {
     const fullBounds = map.getBounds();
     const mapElement = mapWrapRef.current;
-    const useVisibleMobileArea = window.matchMedia("(max-width: 900px)").matches
-      && props.mobileSearchBottomInset > 0
-      && mapElement;
+    if (!mapElement) {
+      const center = map.getCenter();
+      return {
+        center: { latitude: center.getLat(), longitude: center.getLng() },
+        bounds: {
+          south: fullBounds.getSouthWest().getLat(),
+          north: fullBounds.getNorthEast().getLat(),
+          west: fullBounds.getSouthWest().getLng(),
+          east: fullBounds.getNorthEast().getLng(),
+        },
+        level: map.getLevel(),
+      };
+    }
+    const isMobile = window.matchMedia("(max-width: 900px)").matches;
+    const useVisibleMobileArea = isMobile
+      && props.mobileSearchBottomInset > 0;
 
-    if (!useVisibleMobileArea) {
+    if (!useVisibleMobileArea && !restrictToControls) {
       const center = map.getCenter();
       return {
         center: { latitude: center.getLat(), longitude: center.getLng() },
@@ -291,13 +309,35 @@ function KakaoMapCanvas(props: BakeryMapProps) {
       };
     }
 
-    const width = mapElement.clientWidth;
-    const height = mapElement.clientHeight;
-    const visibleBottom = Math.max(1, height - Math.min(props.mobileSearchBottomInset, height - 1));
+    const width = Math.max(1, mapElement.clientWidth);
+    const height = Math.max(1, mapElement.clientHeight);
+    const mapRect = mapElement.getBoundingClientRect();
+    const controlsRect = restrictToControls
+      ? mapControlStackRef.current?.getBoundingClientRect()
+      : undefined;
+    const searchButtonRect = restrictToControls
+      ? searchHereButtonRef.current?.getBoundingClientRect()
+      : undefined;
+    const searchArea = resolveSearchAreaPixels({
+      width,
+      height,
+      mobileBottomInset: props.mobileSearchBottomInset,
+      isMobile,
+      restrictToControls,
+      controlsRight: controlsRect
+        ? controlsRect.right - mapRect.left
+        : undefined,
+      searchButtonBottom: searchButtonRect
+        ? searchButtonRect.bottom - mapRect.top
+        : undefined,
+    });
     const projection = map.getProjection();
-    const northEast = projection.coordsFromContainerPoint(new kakao.maps.Point(width, 0));
-    const southWest = projection.coordsFromContainerPoint(new kakao.maps.Point(0, visibleBottom));
-    const visibleCenter = projection.coordsFromContainerPoint(new kakao.maps.Point(width / 2, visibleBottom / 2));
+    const northEast = projection.coordsFromContainerPoint(new kakao.maps.Point(searchArea.right, 0));
+    const southWest = projection.coordsFromContainerPoint(new kakao.maps.Point(0, searchArea.bottom));
+    const visibleCenter = projection.coordsFromContainerPoint(new kakao.maps.Point(
+      searchArea.right / 2,
+      searchArea.bottom / 2,
+    ));
 
     return {
       center: {
@@ -343,7 +383,7 @@ function KakaoMapCanvas(props: BakeryMapProps) {
             initialViewportFrameRef.current = null;
             if (mapRef.current !== map) return;
             constrainToDaejeon(map);
-            props.onViewportChange(getSearchViewport(map));
+            props.onViewportChange(getSearchViewport(map, true));
           });
         }}
         onCenterChanged={(map) => {
@@ -458,7 +498,7 @@ function KakaoMapCanvas(props: BakeryMapProps) {
                     props.onSelect(store.id);
                   }}
                 >
-                  <Wheat aria-hidden="true" size={13} />
+                  <Croissant aria-hidden="true" size={14} />
                 </button>
                 {showMarkerName ? <span className="bakery-label-name">{store.name}</span> : null}
               </div>
@@ -467,7 +507,7 @@ function KakaoMapCanvas(props: BakeryMapProps) {
         })}
       </Map>
 
-      <div className="map-control-stack" aria-label="지도 확대 축소">
+      <div ref={mapControlStackRef} className="map-control-stack" aria-label="지도 확대 축소">
         <button type="button" onClick={zoomIn} disabled={mapLevel <= 1} aria-label="지도 확대" title="지도 확대">
           <Plus aria-hidden="true" size={19} />
         </button>
@@ -476,6 +516,7 @@ function KakaoMapCanvas(props: BakeryMapProps) {
         </button>
       </div>
       <button
+        ref={searchHereButtonRef}
         type="button"
         className="map-locate-button"
         data-loading={props.locationStatus === "locating"}
@@ -491,7 +532,7 @@ function KakaoMapCanvas(props: BakeryMapProps) {
         className="map-search-here"
         onClick={() => {
           const map = mapRef.current;
-          if (map) props.onSearchHere(getSearchViewport(map));
+          if (map) props.onSearchHere(getSearchViewport(map, true));
         }}
       >
         <Search aria-hidden="true" size={16} /> 현재 위치에서 검색

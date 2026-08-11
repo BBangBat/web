@@ -71,6 +71,7 @@ export function SignupForm({
     formState: { errors },
   } = useForm<SignupFormValues>({
     resolver: zodResolver(signupSchema),
+    mode: "onChange",
     defaultValues: {
       nickname: "",
       ...(initialGender ? { gender: initialGender } : {}),
@@ -81,12 +82,20 @@ export function SignupForm({
   });
   const selectedGender = useWatch({ control, name: "gender" });
   const selectedAgeGroup = useWatch({ control, name: "ageGroup" });
+  const termsAgreed = useWatch({ control, name: "termsAgreed" });
+  const privacyAgreed = useWatch({ control, name: "privacyAgreed" });
   const nickname = useWatch({ control, name: "nickname" }) ?? "";
 
   const {
     patternInvalid: nicknamePatternInvalid,
     status: nicknameStatus,
   } = useNicknameAvailability({ nickname, enabled: signupStep === "form" });
+  const canSubmit = isValidNickname(nickname)
+    && Boolean(selectedGender)
+    && Boolean(selectedAgeGroup)
+    && termsAgreed
+    && privacyAgreed
+    && nicknameStatus === "available";
 
   const signupMutation = useMutation({
     mutationFn: async (values: SignupFormValues) => {
@@ -306,10 +315,13 @@ export function SignupForm({
               <ChevronRight aria-hidden="true" size={16} />
             </button>
           </div>
-          {errors.termsAgreed || errors.privacyAgreed ? <p className="field-error">필수 약관에 모두 동의해 주세요.</p> : null}
         </div>
 
-        <button type="submit" className="button button-primary submit-button" disabled={signupMutation.isPending || nicknameStatus === "checking" || nicknameStatus === "taken"}>
+        <button
+          type="submit"
+          className="button button-primary submit-button"
+          disabled={!canSubmit || signupMutation.isPending}
+        >
           {signupMutation.isPending ? "가입하는 중…" : "빵밭 시작하기"}
         </button>
         </form>
