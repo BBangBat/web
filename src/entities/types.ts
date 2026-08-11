@@ -24,6 +24,7 @@ export type Store = Coordinates & {
   address: string;
   phoneNumber: string | null;
   imageUrl: string;
+  reviewCount?: number;
   menus?: StoreMenu[];
 };
 

@@ -3,6 +3,7 @@ import { ArrowUpRight, Heart, MessageCircleMore, Navigation, Star } from "lucide
 import type { Congestion, Coordinates, Store, TalkSummary } from "@/entities/types";
 import {
   compactAddress,
+  compactDaejeonAddress,
   congestionCopy,
   distanceInKm,
   formatDistance,
@@ -16,6 +17,7 @@ type StoreCardProps = {
   summary?: TalkSummary;
   compact?: boolean;
   dense?: boolean;
+  explore?: boolean;
   showCongestion?: boolean;
   selected?: boolean;
   onSelect?: (storeId: number) => void;
@@ -31,6 +33,7 @@ export function StoreCard({
   summary,
   compact = false,
   dense = false,
+  explore = false,
   showCongestion = false,
   selected = false,
   onSelect,
@@ -45,23 +48,31 @@ export function StoreCard({
     "store-card",
     compact ? "store-card-compact" : "",
     dense ? "store-card-dense" : "",
+    explore ? "store-card-explore" : "",
+    dense || explore ? "store-card-summary" : "",
   ].filter(Boolean).join(" ");
 
-  if (dense) {
+  if (dense || explore) {
     const selectContent = (
-      <>
-        <div
-          className="store-card-image"
-          style={hasCustomImage ? { backgroundImage: `url(${store.imageUrl})` } : undefined}
-          aria-hidden="true"
-        >
-          {!hasCustomImage ? <span>BB</span> : null}
-        </div>
-        <div className="store-card-body">
+      <div className="store-card-body">
+        <div className="store-card-summary-title">
           <h3>{store.name}</h3>
-          <p>{compactAddress(store.address)}</p>
+          {showCongestion && congestion ? (
+            <span className={`store-card-dense-congestion congestion-${congestion.current.toLowerCase()}`}>
+              <i aria-hidden="true" />
+              {congestionCopy[congestion.current].shortLabel}
+            </span>
+          ) : null}
         </div>
-      </>
+        <p className="store-card-summary-address" title={compactAddress(store.address)}>
+          {compactDaejeonAddress(store.address)}
+        </p>
+        {typeof store.reviewCount === "number" ? (
+          <p className="store-card-summary-reviews">
+            빵명록 {store.reviewCount > 0 ? store.reviewCount.toLocaleString("ko-KR") : "없음"}
+          </p>
+        ) : null}
+      </div>
     );
 
     return (
@@ -75,28 +86,18 @@ export function StoreCard({
             {selectContent}
           </Link>
         )}
-        {onToggleFavorite || showCongestion ? (
+        {onToggleFavorite ? (
           <div className="store-card-dense-actions">
-            {showCongestion ? (
-              congestion ? (
-                <span className={`store-card-dense-congestion congestion-${congestion.current.toLowerCase()}`}>
-                  <i aria-hidden="true" />
-                  {congestionCopy[congestion.current].shortLabel}
-                </span>
-              ) : <span className="store-card-dense-congestion-loading">확인 중</span>
-            ) : null}
-            {onToggleFavorite ? (
-              <button
-                type="button"
-                className="store-card-favorite"
-                aria-label={isFavorite ? `${store.name} 즐겨찾기 해제` : `${store.name} 즐겨찾기`}
-                aria-pressed={isFavorite}
-                disabled={favoritePending}
-                onClick={() => onToggleFavorite(store.id)}
-              >
-                <Heart aria-hidden="true" size={18} fill={isFavorite ? "currentColor" : "none"} />
-              </button>
-            ) : null}
+            <button
+              type="button"
+              className="store-card-favorite"
+              aria-label={isFavorite ? `${store.name} 즐겨찾기 해제` : `${store.name} 즐겨찾기`}
+              aria-pressed={isFavorite}
+              disabled={favoritePending}
+              onClick={() => onToggleFavorite(store.id)}
+            >
+              <Heart aria-hidden="true" size={20} fill={isFavorite ? "currentColor" : "none"} />
+            </button>
           </div>
         ) : null}
       </div>

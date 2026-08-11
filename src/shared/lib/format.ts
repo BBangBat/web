@@ -53,6 +53,13 @@ export function compactAddress(address: string): string {
   return address.replace(/\([^)]*\)/g, "").replace(/\s+/g, " ").trim();
 }
 
+export function compactDaejeonAddress(address: string): string {
+  return address
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^(?:대전광역시|대전시|대전)\s*/, "");
+}
+
 export function relativeTime(value: string | null): string {
   if (!value) return "방금 전";
 

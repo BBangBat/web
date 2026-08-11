@@ -100,7 +100,7 @@ describe("SignupForm", () => {
     expect(unknownButtons[1]).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("소셜 값이 없으면 성별과 연령대를 미리 선택하지 않고 직접 선택하게 한다", async () => {
+  it("소셜 값이 없으면 성별과 연령대를 직접 선택할 때까지 가입 버튼을 비활성화한다", () => {
     renderSignup();
     fireEvent.click(screen.getByRole("button", { name: "새로 가입하기" }));
 
@@ -108,9 +108,10 @@ describe("SignupForm", () => {
     expect(unknownButtons[0]).toHaveAttribute("aria-pressed", "false");
     expect(unknownButtons[1]).toHaveAttribute("aria-pressed", "false");
 
-    fireEvent.submit(screen.getByRole("button", { name: "빵밭 시작하기" }).closest("form")!);
-    expect(await screen.findByText("성별을 선택해 주세요.")).toBeInTheDocument();
-    expect(screen.getByText("연령대를 선택해 주세요.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "빵밭 시작하기" })).toBeDisabled();
+    expect(screen.queryByText("성별을 선택해 주세요.")).not.toBeInTheDocument();
+    expect(screen.queryByText("연령대를 선택해 주세요.")).not.toBeInTheDocument();
+    expect(screen.queryByText("필수 약관에 모두 동의해 주세요.")).not.toBeInTheDocument();
   });
 
   it("소셜 초기값보다 회원가입 화면에서 바꾼 값을 우선해 전송한다", async () => {
@@ -123,7 +124,9 @@ describe("SignupForm", () => {
     screen.getAllByRole("checkbox").forEach((checkbox) => fireEvent.click(checkbox));
 
     await screen.findByLabelText("사용 가능");
-    fireEvent.click(screen.getByRole("button", { name: "빵밭 시작하기" }));
+    const submitButton = screen.getByRole("button", { name: "빵밭 시작하기" });
+    await waitFor(() => expect(submitButton).toBeEnabled());
+    fireEvent.click(submitButton);
 
     await waitFor(() => expect(mocks.signup).toHaveBeenCalledWith({
       tempToken: "temporary-token",
