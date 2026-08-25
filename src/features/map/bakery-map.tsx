@@ -9,7 +9,7 @@ import { congestionCopy, DAEJEON_BOUNDS, DEFAULT_LOCATION } from "@/shared/lib/f
 import type { LocationStatus } from "@/shared/hooks/use-geolocation";
 import { resolveSearchAreaPixels } from "@/features/map/map-search-area";
 
-export const INITIAL_MAP_LEVEL = 5;
+export const INITIAL_MAP_LEVEL = 4;
 
 type MapFocusRequest = {
   id: number;
