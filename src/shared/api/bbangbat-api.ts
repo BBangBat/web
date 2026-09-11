@@ -129,7 +129,6 @@ export const bbangbatApi = {
   voteCongestion(
     storeId: number,
     level: CongestionLevel,
-    location: Coordinates,
     accessToken?: string | null,
   ) {
     return apiRequest<Congestion>("/api/congestion", {
@@ -138,8 +137,8 @@ export const bbangbatApi = {
       body: JSON.stringify({
         storeId,
         level,
-        latitude: location.latitude,
-        longitude: location.longitude,
+        latitude: null,
+        longitude: null,
       }),
     });
   },

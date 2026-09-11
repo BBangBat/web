@@ -1,5 +1,4 @@
 const DEFAULT_DEVELOPMENT_API_URL = "https://dev-api.bbangbat.com";
-const PRODUCTION_API_URL = "https://api.bbangbat.com";
 
 function normalizeBaseUrl(value: string): string {
   return value.replace(/\/+$/, "");
@@ -12,5 +11,4 @@ const apiBaseUrl = normalizeBaseUrl(
 export const env = {
   oauthBaseUrl: apiBaseUrl,
   kakaoMapAppKey: process.env.NEXT_PUBLIC_KAKAO_MAP_APP_KEY || "",
-  usesDevelopmentCongestionVoteLocation: apiBaseUrl !== PRODUCTION_API_URL,
 } as const;

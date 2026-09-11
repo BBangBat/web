@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useDeferredValue,
   useEffect,
   useMemo,
@@ -20,7 +21,10 @@ import {
   optimisticallySetFavorite,
   rollbackFavoriteCache,
 } from "@/features/favorites/favorite-cache";
-import { shouldPreserveSelectedCardOnDetailClose } from "@/features/home/home-navigation";
+import {
+  getMobileDetailHistoryStoreId,
+  shouldPreserveSelectedCardOnDetailClose,
+} from "@/features/home/home-navigation";
 import { BakeryMap, INITIAL_MAP_LEVEL, type MapViewport } from "@/features/map/bakery-map";
 import { StoreCard } from "@/features/stores/store-card";
 import { StoreMapPanel } from "@/features/stores/store-map-panel";
@@ -34,6 +38,7 @@ import { EmptyState, ErrorState, LoadingState } from "@/shared/ui/states";
 type SheetSnap = "collapsed" | "expanded";
 type SidebarTab = "nearby" | "favorites";
 type DetailPlacement = "floating" | "sidebar";
+type HistoryUpdateMode = "push" | "replace";
 
 const COLLAPSED_SHEET_HEIGHT = 270;
 
@@ -76,6 +81,9 @@ export function HomeScreen({
   const initialStoreFocusRef = useRef(false);
   const initialAreaViewportRef = useRef<MapViewport | null>(null);
   const mobileSearchSelectionRef = useRef(false);
+  const mobileDetailHistoryEntryRef = useRef(false);
+  const initialMobileDetailHistoryPreparedRef = useRef(false);
+  const closeSelectedStoreDetailRef = useRef<(fromBrowserHistory?: boolean) => void>(() => {});
   const preserveSelectedCardOnCloseRef = useRef(
     Boolean(initialStoreId && initialDetailPlacement === "sidebar"),
   );
@@ -192,6 +200,32 @@ export function HomeScreen({
     }));
   }, [initialDetailPlacement, initialStoreId, selectedStore]);
 
+  useEffect(() => {
+    if (
+      initialMobileDetailHistoryPreparedRef.current
+      || !initialStoreId
+      || !window.matchMedia("(max-width: 900px)").matches
+    ) return;
+
+    initialMobileDetailHistoryPreparedRef.current = true;
+    const detailUrl = new URL(window.location.href);
+    const listUrl = new URL(window.location.href);
+    listUrl.searchParams.delete("storeId");
+    listUrl.searchParams.delete("detail");
+    listUrl.searchParams.delete("reviewId");
+    const currentState = window.history.state && typeof window.history.state === "object"
+      ? window.history.state
+      : {};
+
+    window.history.replaceState(currentState, "", `${listUrl.pathname}${listUrl.search}${listUrl.hash}`);
+    window.history.pushState(
+      { ...currentState, bbangbatMobileDetail: true },
+      "",
+      `${detailUrl.pathname}${detailUrl.search}${detailUrl.hash}`,
+    );
+    mobileDetailHistoryEntryRef.current = true;
+  }, [initialStoreId]);
+
   const congestionByStore = useMemo(
     () => new Map((congestionsQuery.data ?? []).map((item) => [item.storeId, item])),
     [congestionsQuery.data],
@@ -239,7 +273,11 @@ export function HomeScreen({
     },
   });
 
-  function updateSelectedStoreId(storeId: number | null, placement?: DetailPlacement) {
+  const updateSelectedStoreId = useCallback((
+    storeId: number | null,
+    placement?: DetailPlacement,
+    historyMode: HistoryUpdateMode = "replace",
+  ) => {
     setPendingInitialReviewId(null);
     setSelectedStoreId(storeId);
     setDetailOpen(Boolean(storeId));
@@ -254,8 +292,16 @@ export function HomeScreen({
       url.searchParams.delete("detail");
     }
     url.searchParams.delete("reviewId");
-    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
-  }
+    const nextState = historyMode === "push"
+      ? { ...(window.history.state ?? {}), bbangbatMobileDetail: true }
+      : window.history.state;
+    if (historyMode === "push") {
+      window.history.pushState(nextState, "", `${url.pathname}${url.search}${url.hash}`);
+    } else {
+      window.history.replaceState(nextState, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+    mobileDetailHistoryEntryRef.current = historyMode === "push";
+  }, []);
 
   function sheetBasePosition(snap: SheetSnap, height: number): number {
     if (snap === "expanded") return 0;
@@ -340,7 +386,8 @@ export function HomeScreen({
     preserveSelectedCardOnCloseRef.current = false;
     setSearchedStore(null);
     mobileSearchSelectionRef.current = false;
-    updateSelectedStoreId(storeId, "floating");
+    const historyMode = window.matchMedia("(max-width: 900px)").matches ? "push" : "replace";
+    updateSelectedStoreId(storeId, "floating", historyMode);
     setSheetSnap("collapsed");
     const store = allKnownStores.find((item) => item.id === storeId);
     if (store) focusMap(store, 3, true);
@@ -398,16 +445,25 @@ export function HomeScreen({
   }
 
   function openSelectedStoreDetail(storeId: number) {
-    updateSelectedStoreId(storeId, "floating");
+    const historyMode = window.matchMedia("(max-width: 900px)").matches ? "push" : "replace";
+    updateSelectedStoreId(storeId, "floating", historyMode);
     setSheetSnap("expanded");
   }
 
-  function closeSelectedStoreDetail() {
+  const closeSelectedStoreDetail = useCallback((fromBrowserHistory = false) => {
+    const isMobile = window.matchMedia("(max-width: 900px)").matches;
+    if (isMobile && !fromBrowserHistory && mobileDetailHistoryEntryRef.current) {
+      window.history.back();
+      return;
+    }
+
+    mobileDetailHistoryEntryRef.current = false;
     const shouldPreserveSelectedCard = shouldPreserveSelectedCardOnDetailClose({
-      isMobile: window.matchMedia("(max-width: 900px)").matches,
+      isMobile,
       preserveSelectedCard: preserveSelectedCardOnCloseRef.current,
       selectedStoreId,
       initialStoreId,
+      fromBrowserHistory,
     });
 
     if (shouldPreserveSelectedCard) {
@@ -434,7 +490,33 @@ export function HomeScreen({
       setAreaSearchLocation(initialArea.center);
       setAreaSearchBounds(initialArea.bounds);
     }
-  }
+  }, [initialStoreId, selectedStoreId, updateSelectedStoreId]);
+
+  useEffect(() => {
+    closeSelectedStoreDetailRef.current = closeSelectedStoreDetail;
+  }, [closeSelectedStoreDetail]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      if (!window.matchMedia("(max-width: 900px)").matches) return;
+      const storeId = getMobileDetailHistoryStoreId(window.history.state, window.location.href);
+      if (storeId) {
+        mobileDetailHistoryEntryRef.current = true;
+        setPendingInitialReviewId(null);
+        setSelectedStoreId(storeId);
+        setDetailOpen(true);
+        setDetailPlacement("floating");
+        return;
+      }
+
+      mobileDetailHistoryEntryRef.current = false;
+      if (!detailOpen) return;
+      closeSelectedStoreDetailRef.current(true);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [detailOpen]);
 
   function searchCurrentArea(searchViewport?: MapViewport) {
     preserveSelectedCardOnCloseRef.current = false;

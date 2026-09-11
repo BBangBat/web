@@ -23,6 +23,21 @@ const stores = [
 ];
 
 describe("bbangbatApi profile", () => {
+  it("혼잡도 투표는 회원과 비회원 모두 위치 없이 전송한다", async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await bbangbatApi.voteCongestion(1, "NORMAL", "access-token");
+    await bbangbatApi.voteCongestion(1, "NORMAL");
+
+    for (const [url, options] of fetchMock.mock.calls) {
+      expect(url).toBe("/api/congestion");
+      expect(JSON.parse(options.body)).toEqual({
+        storeId: 1, level: "NORMAL", latitude: null, longitude: null,
+      });
+    }
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
   });
