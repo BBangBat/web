@@ -133,8 +133,7 @@ h1, h2, h3, h4, h5, h6, strong, b { font-weight: 600; }
 .nearby-heading span { color: var(--orange); font-size: .75rem; font-weight: 600; }
 .nearby-heading button { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 9px; background: transparent; color: var(--muted); }
 .nearby-heading button:hover { background: var(--paper-deep); color: var(--orange); }
-.store-list { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 8px; overflow-y: auto; padding: 10px 2px 20px; -ms-overflow-style: none; scrollbar-width: none; }
-.store-list::-webkit-scrollbar { display: none; }
+.store-list { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 8px; overflow-y: auto; padding: 10px 2px 20px; scrollbar-color: #d9cfc2 transparent; scrollbar-width: thin; }
 .sidebar-footer { display: flex; min-height: 58px; flex: 0 0 58px; align-items: center; flex-direction: column; justify-content: center; gap: 5px; border-top: 1px solid var(--line); color: #958d82; font-size: .63rem; }
 .sidebar-footer-copyright, .sidebar-footer-links { display: flex; align-items: center; justify-content: center; gap: 6px; }
 .sidebar-footer-copyright { color: #7f776d; }
@@ -715,7 +714,7 @@ h1, h2, h3, h4, h5, h6, strong, b { font-weight: 600; }
   .sidebar-tabs { width: calc(100% - 24px); flex: 0 0 48px; align-self: center; margin: 0; }
   .mobile-bottom-sheet .nearby-heading { flex: 0 0 41px; margin: 0; padding: 0 15px; }
   .mobile-bottom-sheet .nearby-heading > button { display: none; }
-  .mobile-bottom-sheet .store-list { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior-y: none; touch-action: pan-y; padding: 9px 12px 24px; scrollbar-width: none; }
+  .mobile-bottom-sheet .store-list { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior-y: none; touch-action: pan-y; padding: 9px 12px 24px; scrollbar-width: thin; }
   .mobile-bottom-sheet.sheet-collapsed .store-list { height: calc(270px - 79px); max-height: calc(270px - 79px); flex: 0 0 calc(270px - 79px); }
   .mobile-bottom-sheet .sidebar-footer { display: none; }
   .mobile-selected-store { display: block; padding: 7px 12px 14px; }

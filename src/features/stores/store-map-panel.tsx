@@ -34,7 +34,6 @@ import {
 import { bbangbatApi } from "@/shared/api/bbangbat-api";
 import { ApiError } from "@/shared/api/client";
 import { featureFlags } from "@/shared/config/features";
-import { getCongestionVoteCoordinates } from "@/shared/hooks/use-geolocation";
 import {
   CONGESTION_VOTE_COOLDOWN_MINUTES,
   congestionVoteCooldownStorageKey,
@@ -400,11 +399,8 @@ export function StoreMapPanel({
 
   const voteMutation = useMutation({
     mutationFn: async (level: CongestionLevel) => {
-      const coordinates = await getCongestionVoteCoordinates({
-        developmentCoordinates: store,
-      });
       if (!accessToken) await bbangbatApi.issueAnonymousToken();
-      return bbangbatApi.voteCongestion(store.id, level, coordinates, accessToken);
+      return bbangbatApi.voteCongestion(store.id, level, accessToken);
     },
     onSuccess: async (nextCongestion) => {
       setSelectedVote(null);
@@ -443,14 +439,6 @@ export function StoreMapPanel({
           notify(`${remainingMinutes}분 뒤 다시 투표할 수 있어요.`, "info");
           return;
         }
-      }
-      if (error instanceof ApiError && error.code === "CONGESTION_VOTE_TOO_FAR") {
-        notify("가게에서 300m 이내일 때만 투표할 수 있어요.", "info");
-        return;
-      }
-      if (error instanceof ApiError && error.code === "OUT_OF_SERVICE_AREA") {
-        notify("대전 지역에서만 투표할 수 있어요.", "info");
-        return;
       }
       if (!accessToken && error instanceof ApiError && error.status === 401) {
         notify("비회원 투표용 쿠키를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.", "error");
@@ -629,7 +617,6 @@ export function StoreMapPanel({
                 <p>현재 현장 상황은 어때요?</p>
                 <small className="map-panel-vote-rules">
                   <span>비회원 참여 가능</span>
-                  <span>가게 근처에서만 투표 가능</span>
                   <span>{voteCooldownMinutes > 0
                     ? `${voteCooldownMinutes}분 뒤 투표 가능`
                     : `투표 후 ${CONGESTION_VOTE_COOLDOWN_MINUTES}분 뒤 재투표 가능`}</span>
